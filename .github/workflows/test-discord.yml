@@ -1,0 +1,18 @@
+name: Test Discord notification
+
+on:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Send test message to Discord
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          curl -X POST \
+            -H "Content-Type: application/json" \
+            -d '{"content":"✅ Bedrock Sale Watcher cloud test works! GitHub can notify Discord even when the laptop watcher is not involved."}' \
+            "$DISCORD_WEBHOOK_URL"
