@@ -13,7 +13,10 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - uses: actions/checkout@v4
+      - name: Download repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Check Steam seasonal sales
         env:
@@ -22,51 +25,55 @@ jobs:
           python3 <<'PY'
           import os
           import json
-          import urllib.request
+          import subprocess
           from datetime import datetime, timezone
           from pathlib import Path
 
-          webhook = os.environ["DISCORD_WEBHOOK_URL"]
+          webhook = os.environ.get("DISCORD_WEBHOOK_URL")
+
+          if not webhook:
+              raise RuntimeError("DISCORD_WEBHOOK_URL secret is missing.")
+
           now = datetime.now(timezone.utc)
 
-          # Official Steam-wide seasonal sales currently announced by Valve.
-          # Steam seasonal sales are the really large store-wide events.
+          # Major Steam-wide seasonal sales.
           sales = [
               {
                   "id": "autumn-2026",
                   "name": "Steam Autumn Sale 2026",
                   "start": "2026-10-01T17:00:00+00:00",
-                  "end":   "2026-10-08T17:00:00+00:00",
+                  "end": "2026-10-08T17:00:00+00:00",
               },
               {
                   "id": "winter-2026",
                   "name": "Steam Winter Sale 2026",
                   "start": "2026-12-17T18:00:00+00:00",
-                  "end":   "2027-01-04T18:00:00+00:00",
+                  "end": "2027-01-04T18:00:00+00:00",
               },
               {
                   "id": "spring-2027",
                   "name": "Steam Spring Sale 2027",
                   "start": "2027-03-18T17:00:00+00:00",
-                  "end":   "2027-03-25T17:00:00+00:00",
+                  "end": "2027-03-25T17:00:00+00:00",
               },
               {
                   "id": "summer-2027",
                   "name": "Steam Summer Sale 2027",
                   "start": "2027-06-24T17:00:00+00:00",
-                  "end":   "2027-07-08T17:00:00+00:00",
+                  "end": "2027-07-08T17:00:00+00:00",
               },
           ]
 
           state_file = Path(".steam-sale-notified")
-          already = set()
+
+          already_notified = set()
 
           if state_file.exists():
-              already = set(
-                  x.strip()
-                  for x in state_file.read_text().splitlines()
-                  if x.strip()
-              )
+              already_notified = {
+                  line.strip()
+                  for line in state_file.read_text().splitlines()
+                  if line.strip()
+              }
 
           changed = False
 
@@ -74,40 +81,57 @@ jobs:
               start = datetime.fromisoformat(sale["start"])
               end = datetime.fromisoformat(sale["end"])
 
-              if start <= now < end and sale["id"] not in already:
-                  end_unix = int(end.timestamp())
+              if not (start <= now < end):
+                  continue
 
-                  payload = {
-                      "content": (
-                          "🔥 **BIG STEAM SALE IS LIVE**\n"
-                          f"## {sale['name']}\n"
-                          "A Steam-wide seasonal sale has started — this is the "
-                          "kind of event where a huge number of games get discounted.\n\n"
-                          f"⏳ Ends <t:{end_unix}:F> (<t:{end_unix}:R>)\n"
-                          "🛒 https://store.steampowered.com/"
-                      )
-                  }
+              if sale["id"] in already_notified:
+                  print(f"Already notified: {sale['name']}")
+                  continue
 
-                  req = urllib.request.Request(
+              start_unix = int(start.timestamp())
+              end_unix = int(end.timestamp())
+
+              payload = {
+                  "content": (
+                      "🔥 **BIG STEAM SALE IS LIVE**\n"
+                      f"## {sale['name']}\n\n"
+                      "A major Steam-wide seasonal sale has started. "
+                      "This is one of the periods where a huge number of games "
+                      "receive discounts across the store.\n\n"
+                      f"🟢 Started: <t:{start_unix}:F>\n"
+                      f"⏳ Ends: <t:{end_unix}:F> (<t:{end_unix}:R>)\n\n"
+                      "🛒 https://store.steampowered.com/"
+                  )
+              }
+
+              result = subprocess.run(
+                  [
+                      "curl",
+                      "-fSs",
+                      "-X", "POST",
+                      "-H", "Content-Type: application/json",
+                      "-H", "User-Agent: Steam-Sale-Watcher/1.0",
+                      "--data-binary", json.dumps(payload),
                       webhook,
-                      data=json.dumps(payload).encode(),
-                      headers={"Content-Type": "application/json"},
-                      method="POST",
+                  ],
+                  capture_output=True,
+                  text=True,
+              )
+
+              if result.returncode != 0:
+                  raise RuntimeError(
+                      "Discord webhook failed:\n"
+                      + result.stderr
                   )
 
-                  with urllib.request.urlopen(req) as response:
-                      if not 200 <= response.status < 300:
-                          raise RuntimeError(
-                              f"Discord returned HTTP {response.status}"
-                          )
+              print(f"Discord notified: {sale['name']}")
 
-                  already.add(sale["id"])
-                  changed = True
-                  print(f"Notified Discord: {sale['name']}")
+              already_notified.add(sale["id"])
+              changed = True
 
           if changed:
               state_file.write_text(
-                  "\n".join(sorted(already)) + "\n"
+                  "\n".join(sorted(already_notified)) + "\n"
               )
           else:
               print("No new major Steam sale to announce.")
@@ -116,6 +140,7 @@ jobs:
       - name: Save notification history
         run: |
           if [ ! -f .steam-sale-notified ]; then
+            echo "No notification history file yet."
             exit 0
           fi
 
@@ -126,8 +151,10 @@ jobs:
 
           if git diff --cached --quiet; then
             echo "Nothing new to save."
-          else
-            git commit -m "Update Steam sale notification history [skip ci]"
-            git pull --rebase origin main
-            git push
+            exit 0
           fi
+
+          git commit -m "Update Steam sale notification history [skip ci]"
+
+          git pull --rebase origin main
+          git push
