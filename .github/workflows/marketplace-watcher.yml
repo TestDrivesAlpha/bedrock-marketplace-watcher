@@ -1,0 +1,118 @@
+name: Bedrock Marketplace Watcher
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: bedrock-marketplace-watcher
+  cancel-in-progress: false
+
+jobs:
+  check-marketplace:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+
+    steps:
+      - name: Download my watcher
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Download Marketplace reader
+        run: |
+          git clone --depth 1 https://github.com/Daniel-Ric/PlayFab-Catalog-Service-Bedrock.git catalog-api
+          cd catalog-api
+          npm ci --omit=dev
+
+      - name: Start Marketplace reader
+        run: |
+          ADMIN_PASS="$(openssl rand -hex 24)"
+          JWT_SECRET="$(openssl rand -hex 32)"
+
+          echo "CATALOG_API_USER=admin" >> "$GITHUB_ENV"
+          echo "CATALOG_API_PASS=$ADMIN_PASS" >> "$GITHUB_ENV"
+
+          cd catalog-api
+
+          nohup env \
+            PORT=3000 \
+            NODE_ENV=production \
+            JWT_SECRET="$JWT_SECRET" \
+            ADMIN_USER=admin \
+            ADMIN_PASS="$ADMIN_PASS" \
+            DEFAULT_ALIAS=prod \
+            TITLE_ID=20CA2 \
+            OS=iOS \
+            PLAYFAB_DEVICE_ID=vmc-github-bedrock-marketplace-watcher-001 \
+            LOG_LEVEL=warn \
+            UPDATE_CHECK_ENABLED=false \
+            UPDATE_CHECK_STARTUP_LOG=false \
+            ENABLE_SALES_WATCHER=false \
+            ENABLE_ITEM_WATCHER=false \
+            ENABLE_CONTENT_UPDATE_WATCHER=false \
+            ENABLE_PRICE_WATCHER=false \
+            ENABLE_TRENDING_WATCHER=false \
+            ENABLE_CREATOR_PARTNER_WATCHER=false \
+            ENABLE_FEATURED_CONTENT_WATCHER=false \
+            ENABLE_SUBSCRIPTION_WATCHER=false \
+            node src/index.js > ../catalog-api.log 2>&1 &
+
+          cd ..
+
+          for i in {1..60}; do
+            if curl -fsS http://127.0.0.1:3000/openapi.json > /dev/null; then
+              echo "Marketplace reader is ready."
+              exit 0
+            fi
+
+            sleep 2
+          done
+
+          echo "Marketplace reader failed to start:"
+          cat catalog-api.log
+          exit 1
+
+      - name: Check Bedrock Marketplace
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          CATALOG_API_USER: ${{ env.CATALOG_API_USER }}
+          CATALOG_API_PASS: ${{ env.CATALOG_API_PASS }}
+          MIN_DISCOUNT: "1"
+        run: |
+          cp watcher.js watcher.mjs
+          node watcher.mjs
+
+      - name: Save discount history
+        run: |
+          MONTH="$(date -u +%Y-%m)"
+
+          if [ "$(cat .watcher-heartbeat 2>/dev/null || true)" != "$MONTH" ]; then
+            echo "$MONTH" > .watcher-heartbeat
+          fi
+
+          git config user.name "Bedrock Sale Watcher"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          if [ -f watcher-state.json ]; then
+            git add watcher-state.json
+          fi
+
+          git add .watcher-heartbeat
+
+          if git diff --cached --quiet; then
+            echo "No watcher history changes to save."
+          else
+            git commit -m "Update Marketplace watcher history [skip ci]"
+            git pull --rebase origin main
+            git push
+          fi
