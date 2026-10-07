@@ -1,0 +1,133 @@
+name: Steam Big Sale Watcher
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 * * * *"
+
+permissions:
+  contents: write
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Check Steam seasonal sales
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+        run: |
+          python3 <<'PY'
+          import os
+          import json
+          import urllib.request
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          webhook = os.environ["DISCORD_WEBHOOK_URL"]
+          now = datetime.now(timezone.utc)
+
+          # Official Steam-wide seasonal sales currently announced by Valve.
+          # Steam seasonal sales are the really large store-wide events.
+          sales = [
+              {
+                  "id": "autumn-2026",
+                  "name": "Steam Autumn Sale 2026",
+                  "start": "2026-10-01T17:00:00+00:00",
+                  "end":   "2026-10-08T17:00:00+00:00",
+              },
+              {
+                  "id": "winter-2026",
+                  "name": "Steam Winter Sale 2026",
+                  "start": "2026-12-17T18:00:00+00:00",
+                  "end":   "2027-01-04T18:00:00+00:00",
+              },
+              {
+                  "id": "spring-2027",
+                  "name": "Steam Spring Sale 2027",
+                  "start": "2027-03-18T17:00:00+00:00",
+                  "end":   "2027-03-25T17:00:00+00:00",
+              },
+              {
+                  "id": "summer-2027",
+                  "name": "Steam Summer Sale 2027",
+                  "start": "2027-06-24T17:00:00+00:00",
+                  "end":   "2027-07-08T17:00:00+00:00",
+              },
+          ]
+
+          state_file = Path(".steam-sale-notified")
+          already = set()
+
+          if state_file.exists():
+              already = set(
+                  x.strip()
+                  for x in state_file.read_text().splitlines()
+                  if x.strip()
+              )
+
+          changed = False
+
+          for sale in sales:
+              start = datetime.fromisoformat(sale["start"])
+              end = datetime.fromisoformat(sale["end"])
+
+              if start <= now < end and sale["id"] not in already:
+                  end_unix = int(end.timestamp())
+
+                  payload = {
+                      "content": (
+                          "🔥 **BIG STEAM SALE IS LIVE**\n"
+                          f"## {sale['name']}\n"
+                          "A Steam-wide seasonal sale has started — this is the "
+                          "kind of event where a huge number of games get discounted.\n\n"
+                          f"⏳ Ends <t:{end_unix}:F> (<t:{end_unix}:R>)\n"
+                          "🛒 https://store.steampowered.com/"
+                      )
+                  }
+
+                  req = urllib.request.Request(
+                      webhook,
+                      data=json.dumps(payload).encode(),
+                      headers={"Content-Type": "application/json"},
+                      method="POST",
+                  )
+
+                  with urllib.request.urlopen(req) as response:
+                      if not 200 <= response.status < 300:
+                          raise RuntimeError(
+                              f"Discord returned HTTP {response.status}"
+                          )
+
+                  already.add(sale["id"])
+                  changed = True
+                  print(f"Notified Discord: {sale['name']}")
+
+          if changed:
+              state_file.write_text(
+                  "\n".join(sorted(already)) + "\n"
+              )
+          else:
+              print("No new major Steam sale to announce.")
+          PY
+
+      - name: Save notification history
+        run: |
+          if [ ! -f .steam-sale-notified ]; then
+            exit 0
+          fi
+
+          git config user.name "Steam Sale Watcher"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          git add .steam-sale-notified
+
+          if git diff --cached --quiet; then
+            echo "Nothing new to save."
+          else
+            git commit -m "Update Steam sale notification history [skip ci]"
+            git pull --rebase origin main
+            git push
+          fi
