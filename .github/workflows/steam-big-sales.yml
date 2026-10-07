@@ -3,13 +3,18 @@ name: Steam Big Sale Watcher
 on:
   workflow_dispatch:
   schedule:
+    # Checks once every hour.
     - cron: "17 * * * *"
 
 permissions:
   contents: write
 
+concurrency:
+  group: steam-big-sale-watcher
+  cancel-in-progress: false
+
 jobs:
-  check:
+  check-steam-sales:
     runs-on: ubuntu-latest
 
     steps:
@@ -18,9 +23,9 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Check Steam seasonal sales
+      - name: Check major Steam sales
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_STEAM_WEBHOOK_URL }}
         run: |
           python3 <<'PY'
           import os
@@ -32,7 +37,9 @@ jobs:
           webhook = os.environ.get("DISCORD_WEBHOOK_URL")
 
           if not webhook:
-              raise RuntimeError("DISCORD_WEBHOOK_URL secret is missing.")
+              raise RuntimeError(
+                  "DISCORD_STEAM_WEBHOOK_URL secret is missing."
+              )
 
           now = datetime.now(timezone.utc)
 
@@ -81,9 +88,11 @@ jobs:
               start = datetime.fromisoformat(sale["start"])
               end = datetime.fromisoformat(sale["end"])
 
+              # Ignore sales that aren't currently active.
               if not (start <= now < end):
                   continue
 
+              # Never spam the same sale repeatedly.
               if sale["id"] in already_notified:
                   print(f"Already notified: {sale['name']}")
                   continue
@@ -96,8 +105,8 @@ jobs:
                       "🔥 **BIG STEAM SALE IS LIVE**\n"
                       f"## {sale['name']}\n\n"
                       "A major Steam-wide seasonal sale has started. "
-                      "This is one of the periods where a huge number of games "
-                      "receive discounts across the store.\n\n"
+                      "This is one of the big periods where large numbers "
+                      "of games receive discounts across Steam.\n\n"
                       f"🟢 Started: <t:{start_unix}:F>\n"
                       f"⏳ Ends: <t:{end_unix}:F> (<t:{end_unix}:R>)\n\n"
                       "🛒 https://store.steampowered.com/"
