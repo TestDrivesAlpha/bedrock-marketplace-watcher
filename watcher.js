@@ -164,7 +164,15 @@ export function getItemInfo(item, official = {}) {
 
 export async function fetchOfficialMetadata(id, fetchFn = fetch) {
   if (!id) return {};
-  const response = await request(`${OFFICIAL_ITEM_API}${encodeURIComponent(id)}?geography=US`, { signal: AbortSignal.timeout(8_000) }, fetchFn);
+  const response = await request(`${OFFICIAL_ITEM_API}${encodeURIComponent(id)}?geography=US`, {
+    signal: AbortSignal.timeout(8_000),
+    headers: {
+      Accept: "application/json",
+      "User-Agent": "BedrockMarketplaceWatcher/2.0 (+https://github.com/TestDrivesAlpha/bedrock-marketplace-watcher)",
+      Origin: "https://www.minecraft.net",
+      Referer: "https://www.minecraft.net/",
+    },
+  }, fetchFn);
   if (!response.ok || !response.json?.result) throw new Error(`Official item metadata unavailable (${response.status}).`);
   return response.json.result;
 }
