@@ -2,6 +2,11 @@ name: Bedrock Marketplace Watcher
 
 on:
   workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview alerts without posting to Discord or changing history
+        type: boolean
+        default: true
   schedule:
     - cron: "*/15 * * * *"
 
@@ -27,6 +32,9 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: "20"
+
+      - name: Validate alert formatting and sale checks
+        run: node --test watcher.test.mjs
 
       - name: Download Marketplace reader
         run: |
@@ -83,16 +91,19 @@ jobs:
           exit 1
 
       - name: Check Bedrock Marketplace
+        id: marketplace
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
           CATALOG_API_USER: ${{ env.CATALOG_API_USER }}
           CATALOG_API_PASS: ${{ env.CATALOG_API_PASS }}
           MIN_DISCOUNT: "1"
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
         run: |
           cp watcher.js watcher.mjs
           node watcher.mjs
 
       - name: Save discount history
+        if: ${{ !cancelled() && (steps.marketplace.outcome == 'success' || steps.marketplace.outcome == 'failure') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         run: |
           MONTH="$(date -u +%Y-%m)"
 
