@@ -99,18 +99,30 @@ def apollo_state(html, country="ID"):
     root = state.get("ROOT_QUERY") if isinstance(state, dict) else None
     if not isinstance(root, dict):
         raise SourceError("public Apollo data has no ROOT_QUERY")
-    contexts = []
-    for key in root:
-        if "(" in key:
-            try:
-                args = json.loads(key[key.index("(") + 1:-1])
-                if isinstance(args.get("context"), dict) and args["context"].get("country"):
-                    contexts.append(args["context"]["country"])
-            except (ValueError, TypeError):
-                continue
-    if country not in contexts:
-        raise SourceError(f"public page country context is not confirmed as {country}")
     return state
+
+
+def source_country(state, operation):
+    """Read the actual country for this operation; locale does not override server geolocation."""
+    countries = set()
+    for key in state["ROOT_QUERY"]:
+        if not key.startswith(operation + "("):
+            continue
+        try:
+            args = json.loads(key[key.index("(") + 1:-1])
+            context = args.get("context") or {}
+            country = context.get("country")
+        except (ValueError, TypeError, AttributeError):
+            raise SourceError(f"{operation} storefront context is unreadable") from None
+        # Product pages can also cache a language-only query, alongside the country-specific query.
+        if country is None:
+            continue
+        if not isinstance(country, str) or not re.fullmatch(r"[A-Z]{2}", country):
+            raise SourceError(f"{operation} storefront country is invalid")
+        countries.add(country)
+    if len(countries) != 1:
+        raise SourceError(f"{operation} storefront country is missing or ambiguous")
+    return countries.pop()
 
 
 def field(obj, name):
@@ -130,6 +142,7 @@ def cover(product):
 
 def campaigns_from_html(html, country="ID", now=None):
     state = apollo_state(html, country)
+    storefront = source_country(state, "Slider_sliders")
     slider = field(state["ROOT_QUERY"], "Slider_sliders")
     if not isinstance(slider, dict) or not isinstance(slider.get("edges"), list):
         raise SourceError("homepage campaign slider is missing; layout changed")
@@ -143,7 +156,7 @@ def campaigns_from_html(html, country="ID", now=None):
         title = node.get("text")
         if not title:
             raise SourceError("featured campaign has no title")
-        item = {"title": title, "url": url, "image": safe_url(field(node, "resizedImageUrl")), "terms": None}
+        item = {"title": title, "url": url, "image": safe_url(field(node, "resizedImageUrl")), "terms": None, "source_country": storefront}
         if path == "/sales/gametoberfest-sale":
             if (now or utc_now()) >= datetime.fromisoformat(FEST_TERMS["end"]):
                 continue
@@ -161,6 +174,7 @@ def minecoin_product(product):
 
 def offers_from_html(html, country="ID", currency="EUR"):
     state = apollo_state(html, country)
+    storefront = source_country(state, "search")
     search = field(state["ROOT_QUERY"], "search")
     results = search.get("results") if isinstance(search, dict) else None
     if not isinstance(results, dict) or not isinstance(results.get("edges"), list) or not isinstance(results.get("totalCount"), int):
@@ -196,6 +210,7 @@ def offers_from_html(html, country="ID", currency="EUR"):
             "cashback_minor": cashback_money.get("amount") if cashback_money.get("currency") == currency else None,
             "cashback_percent": (product.get("cashback") or {}).get("valuePercent"),
             "countries": None, "blocked_countries": [], "notes": [],
+            "source_country": storefront,
         })
     if results["totalCount"] > 0 and not results["edges"]:
         raise SourceError("nonempty Minecoin search reports no readable product entries")
@@ -206,6 +221,7 @@ def offers_from_html(html, country="ID", currency="EUR"):
 
 def enrich_offer(offer, html, country="ID"):
     state = apollo_state(html, country)
+    activation_source = source_country(state, "product")
     product = state.get("Product::" + offer["slug"])
     if not isinstance(product, dict) or not minecoin_product(product):
         raise SourceError("product details do not match the requested Minecoin prepaid code")
@@ -216,6 +232,7 @@ def enrich_offer(offer, html, country="ID"):
     result["countries"] = countries
     result["blocked_countries"] = product.get("blockedCountries") or []
     result["notes"] = product.get("notes") or []
+    result["activation_source_country"] = activation_source
     return result
 
 
@@ -259,11 +276,11 @@ def money(minor):
 
 def campaign_embed(campaign):
     terms = campaign.get("terms")
-    description = "Featured broad sale on Eneba's public Indonesia homepage. Product eligibility and the checkout price depend on the offer."
+    description = f"Featured broad sale on Eneba's public homepage, with **{campaign['source_country']} storefront context**. This is a regional reference; campaign eligibility for Indonesia is unverified. Product eligibility and the checkout price depend on the offer."
     fields = [{"name": "Source", "value": f"[Open campaign and current terms]({campaign['url']})"}]
     if terms:
         fields.extend([
-            {"name": "Coupon snapshot", "value": f"**{terms['percent']}% code: {terms['code']}** — terms captured {terms['captured']}."},
+            {"name": "Coupon snapshot", "value": f"**{terms['percent']}% code: {terms['code']}** — terms captured {terms['captured']} from the Indonesia page. Applicability to this storefront is unverified."},
             {"name": "Coupon conditions", "value": terms["text"]},
             {"name": "Minecoin applicability", "value": "**Unverified.** The stated coupon is for one game; do not assume it applies to Minecoin codes."},
         ])
@@ -283,6 +300,7 @@ def offer_embed(offer, previous=None, country="ID", alternative="DE"):
         event = f"Observed listing-price drop: **{drop:.1f}%**, {money(previous['price_minor'])} → **{money(offer['price_minor'])}**."
     else:
         event = f"First observed available listing: **{money(offer['price_minor'])}**. This establishes a baseline; no price discount is claimed."
+    event += f"\nListing reference: **{offer['source_country']} storefront context**, displayed in EUR. This is not a verified Indonesian checkout quote."
     fields = [
         {"name": "Activation", "value": f"**{heading}**\nEneba allowed-country list: ID {'yes' if primary else 'no'}; DE {'yes' if eligible(offer, alternative) else 'no'}. 'Global' alone does not guarantee activation."},
         {"name": "Displayed price before checkout fees", "value": f"**{money(offer['price_minor'])}** for {offer['coins']:,} Minecoins\n{money(Decimal(offer['price_minor']) * 1000 / offer['coins'])} per 1,000 Minecoins. Seller: {offer['seller'][:100]}."},
@@ -322,6 +340,10 @@ def save_state(state, file):
     temporary.replace(target)
 
 
+def price_key(offer):
+    return "|".join((offer["slug"], offer["currency"], offer["source_country"]))
+
+
 def plan_events(snapshot, state, min_drop_percent=1, country="ID", alternative="DE"):
     events = []
     for campaign in snapshot["campaigns"]:
@@ -336,12 +358,12 @@ def plan_events(snapshot, state, min_drop_percent=1, country="ID", alternative="
             if key not in groups or offer["price_minor"] < groups[key]["price_minor"]:
                 groups[key] = offer
     for group, offer in sorted(groups.items(), key=lambda item: (0 if item[0][0] == "ID" else 1, item[0][1])):
-        previous = state["prices"].get(offer["slug"])
-        baseline = "baseline:" + offer["slug"]
+        previous = state["prices"].get(price_key(offer))
+        baseline = "baseline:" + offer["slug"] + ":" + offer["source_country"]
         if baseline not in state["notified"]:
             event_key = baseline
-        elif previous and previous.get("currency") == offer["currency"] and offer["price_minor"] < previous["price_minor"] and (previous["price_minor"] - offer["price_minor"]) * 100 / previous["price_minor"] >= min_drop_percent:
-            event_key = f"drop:{offer['slug']}:{previous['price_minor']}:{offer['price_minor']}:{previous.get('at', '')}"
+        elif previous and previous.get("currency") == offer["currency"] and previous.get("source_country") == offer["source_country"] and offer["price_minor"] < previous["price_minor"] and (previous["price_minor"] - offer["price_minor"]) * 100 / previous["price_minor"] >= min_drop_percent:
+            event_key = f"drop:{offer['slug']}:{offer['source_country']}:{previous['price_minor']}:{offer['price_minor']}:{previous.get('at', '')}"
         else:
             continue
         if event_key not in state["notified"]:
@@ -431,7 +453,7 @@ def run(snapshot, state, dry_run=False, webhook=None, save=None, post=post_disco
                 updated["campaigns"][event["campaign"]["key"]] = stamp(now)
             if "offer" in event:
                 offer = event["offer"]
-                updated["prices"][offer["slug"]] = {"price_minor": offer["price_minor"], "currency": offer["currency"], "at": stamp(now)}
+                updated["prices"][price_key(offer)] = {"price_minor": offer["price_minor"], "currency": offer["currency"], "source_country": offer["source_country"], "at": stamp(now)}
             if "failure" in event:
                 failure = event["failure"]
                 updated["failures"][failure["source"]] = failure["error"]
@@ -439,7 +461,7 @@ def run(snapshot, state, dry_run=False, webhook=None, save=None, post=post_disco
             save(updated)
     # Only complete successful collection can reset failure status. Failed products keep their last price.
     for offer in snapshot["offers"]:
-        updated["prices"][offer["slug"]] = {"price_minor": offer["price_minor"], "currency": offer["currency"], "at": stamp(now)}
+        updated["prices"][price_key(offer)] = {"price_minor": offer["price_minor"], "currency": offer["currency"], "source_country": offer["source_country"], "at": stamp(now)}
     updated["failures"] = {error["source"]: error["error"] for error in snapshot["errors"]}
     if save:
         save(updated)
