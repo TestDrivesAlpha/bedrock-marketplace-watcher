@@ -1,0 +1,98 @@
+name: Eneba and Pokemon Deal Watchers
+
+on:
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: Preview current offers without posting or changing history
+        type: boolean
+        default: true
+  schedule:
+    - cron: "37 * * * *"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: eneba-pokemon-deal-watchers
+  cancel-in-progress: false
+
+jobs:
+  watch-deals:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      # Both watchers use the same existing Discord webhook. Avoid delivery bursts.
+      max-parallel: 1
+      matrix:
+        include:
+          - label: Eneba sales and Minecoins
+            script: eneba_watcher.py
+            tests: test_eneba_watcher.py
+            state: .eneba-price-state.json
+          - label: Pokemon games and DLC
+            script: pokemon_watcher.py
+            tests: test_pokemon_watcher.py
+            state: .pokemon-price-state.json
+    env:
+      PYTHONDONTWRITEBYTECODE: "1"
+      PYTHONUNBUFFERED: "1"
+    steps:
+      - name: Download repository
+        uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+
+      - name: Test this watcher
+        run: python -B -m unittest -v "${{ matrix.tests }}"
+
+      - name: Check current offers
+        id: offers
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_STEAM_WEBHOOK_URL }}
+          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+          ENEBA_COUNTRY: ID
+          ENEBA_ALT_COUNTRY: DE
+          ENEBA_CURRENCY: EUR
+          ENEBA_STATE_FILE: .eneba-price-state.json
+          POKEMON_COUNTRIES: DE,US
+          POKEMON_STATE_FILE: .pokemon-price-state.json
+          # Unknown: the user's email and physical location do not establish this.
+          NINTENDO_ACCOUNT_COUNTRY: ""
+        run: python -B "${{ matrix.script }}"
+
+      - name: Save observed prices and delivery checkpoints
+        if: ${{ !cancelled() && (steps.offers.outcome == 'success' || steps.offers.outcome == 'failure') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
+        env:
+          STATE_PATH: ${{ matrix.state }}
+        run: |
+          if [ ! -f "$STATE_PATH" ]; then
+            echo "No price history was written."
+            exit 0
+          fi
+
+          git config user.name "Game Deal Watcher"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -- "$STATE_PATH"
+          if git diff --cached --quiet; then
+            echo "Price and notification history are unchanged."
+            exit 0
+          fi
+          git commit -m "Update game deal watcher history [skip ci]"
+
+          for attempt in 1 2 3 4 5; do
+            git pull --rebase origin main
+            if git push; then
+              exit 0
+            fi
+            sleep "$((attempt * 2))"
+          done
+          echo "Could not save delivery checkpoints to GitHub."
+          exit 1
