@@ -99,7 +99,7 @@ async function getSales() {
   for (const endpoint of ["/marketplace/sales/prod", "/marketplace/sales"]) {
     const result = await request(`${API}${endpoint}`, { headers: { Authorization: `Bearer ${token}` } });
     if (result.ok) return result.json;
-    if (result.text.toLowerCase().includes("no sales currently active")) return null;
+    if (result.text.toLowerCase().includes("no sales currently active")) return { sales: [] };
     if (result.status !== 404) throw new Error(`Marketplace sales request failed (${result.status}).`);
   }
   throw new Error("Could not find a usable Marketplace sales endpoint.");
@@ -116,6 +116,13 @@ export function getSalesArray(payload) {
   return Object.entries(payload).filter(([, value]) => value && typeof value === "object" &&
     ["discountPercent", "discountPercentage", "discount"].some((key) => key in value))
     .map(([key, sale]) => ({ ...sale, __storeKey: key }));
+}
+
+export function recognizedSalesPayload(payload) {
+  return Array.isArray(payload) || Boolean(payload && typeof payload === "object" && (
+    Array.isArray(payload.sales) || (payload.sales && typeof payload.sales === "object") || Array.isArray(payload.data) ||
+    Object.values(payload).some((value) => value && typeof value === "object" && ["discountPercent", "discountPercentage", "discount"].some((key) => key in value))
+  ));
 }
 
 export function getDiscount(sale) {
@@ -393,11 +400,7 @@ export async function main(args = process.argv.slice(2)) {
   const fixtureData = fixture ? JSON.parse(await fs.readFile(fixture, "utf8")) : null;
   const payload = fixtureData ? fixtureData.payload ?? fixtureData : await getSales();
   // A malformed successful response must not become an authoritative empty catalog for cleanup.
-  const supportedPayload = payload === null || Array.isArray(payload) || (payload && typeof payload === "object" && (
-    Array.isArray(payload.sales) || (payload.sales && typeof payload.sales === "object") || Array.isArray(payload.data) ||
-    Object.values(payload).some((value) => value && typeof value === "object" && ["discountPercent", "discountPercentage", "discount"].some((key) => key in value))
-  ));
-  if (!supportedPayload) throw new Error("Marketplace source returned an unrecognized sales payload; cleanup is disabled for this run.");
+  if (!recognizedSalesPayload(payload)) throw new Error("Marketplace source returned an unrecognized sales payload; cleanup is disabled for this run.");
   const state = await readState();
   const options = { now, minDiscount };
   // An offline fixture never causes an HTTP request, including metadata enrichment.

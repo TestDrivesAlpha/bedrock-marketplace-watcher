@@ -31,6 +31,15 @@ const earlyState = () => ({ seenSales: { [legacyKey]: "2026-10-15T17:14:32.672Z"
 const plan = (data = payload, state = blank(), extra = {}) => watcher.planNotifications(data, state, { now: NOW, metadata: async () => official, ...extra });
 const field = (embed, name) => embed.fields.find((entry) => entry.name === name)?.value;
 
+test("only recognized catalog responses can authorize cleanup, including an explicit empty sales list", () => {
+  for (const valid of [payload, { sales: [] }, { sales: {} }, [], { data: [] }]) {
+    assert.equal(watcher.recognizedSalesPayload(valid), true);
+  }
+  for (const invalid of [null, undefined, {}, { error: "upstream unavailable" }, "not JSON"]) {
+    assert.equal(watcher.recognizedSalesPayload(invalid), false);
+  }
+});
+
 test("captured Skeleton promotion includes exact image, creator, product link, reported percentage and unverified equal prices", async () => {
   const state = blank(), before = structuredClone(state);
   const result = await plan(payload, state);
