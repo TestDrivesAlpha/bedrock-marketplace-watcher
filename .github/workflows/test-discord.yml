@@ -2,17 +2,88 @@ name: Test Discord notification
 
 on:
   workflow_dispatch:
+    inputs:
+      destination:
+        description: Watcher destination to verify with one test message
+        type: choice
+        default: Minecraft
+        options:
+          - Minecraft
+          - Steam
+          - Eneba
+          - Pokemon
+      expected_channel_id:
+        description: Optional Discord channel ID that the acknowledgement must match
+        type: string
+        required: false
+        default: ""
+
+permissions: {}
 
 jobs:
   test:
     runs-on: ubuntu-latest
+    timeout-minutes: 3
+    env:
+      DISCORD_DESTINATION: ${{ inputs.destination || 'Minecraft' }}
+      WEBHOOK_SECRET_NAME: ${{ inputs.destination == 'Steam' && 'DISCORD_STEAM_WEBHOOK_URL' || inputs.destination == 'Eneba' && 'DISCORD_ENEBA_WEBHOOK_URL' || inputs.destination == 'Pokemon' && 'DISCORD_POKEMON_WEBHOOK_URL' || 'DISCORD_WEBHOOK_URL' }}
 
     steps:
-      - name: Send test message to Discord
+      - name: Verify selected Discord destination
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets[env.WEBHOOK_SECRET_NAME] }}
+          EXPECTED_CHANNEL_ID: ${{ inputs.expected_channel_id }}
         run: |
-          curl -X POST \
-            -H "Content-Type: application/json" \
-            -d '{"content":"✅ Bedrock Sale Watcher cloud test works! GitHub can notify Discord even when the laptop watcher is not involved."}' \
-            "$DISCORD_WEBHOOK_URL"
+          python3 <<'PY'
+          import json
+          import os
+          from urllib.error import HTTPError, URLError
+          from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+          from urllib.request import Request, urlopen
+
+          usernames = {
+              "Minecraft": "Bedrock Sale Watcher",
+              "Steam": "Steam Sale Watcher",
+              "Eneba": "Eneba Sale Watcher",
+              "Pokemon": "Pokémon Price Watcher",
+          }
+          destination = os.environ["DISCORD_DESTINATION"]
+          if destination not in usernames:
+              raise SystemExit("Unsupported Discord verification destination.")
+          webhook = os.environ.get("DISCORD_WEBHOOK_URL", "").strip()
+          if not webhook:
+              raise SystemExit("Required repository secret " + os.environ["WEBHOOK_SECRET_NAME"] + " is missing.")
+          expected = os.environ.get("EXPECTED_CHANNEL_ID", "").strip()
+          if expected and not (expected.isascii() and expected.isdigit()):
+              raise SystemExit("expected_channel_id must contain only digits.")
+          try:
+              parts = urlsplit(webhook)
+              query = [(key, value) for key, value in parse_qsl(parts.query) if key != "wait"]
+              query.append(("wait", "true"))
+              url = urlunsplit(parts._replace(query=urlencode(query)))
+              payload = {
+                  "username": usernames[destination],
+                  "content": "**Webhook destination verification**\nDestination: **" + destination + "**. This is one routing test message.",
+                  "allowed_mentions": {"parse": []},
+              }
+              request = Request(url, data=json.dumps(payload).encode("utf-8"), method="POST",
+                                headers={"Content-Type": "application/json", "User-Agent": "Discord-Destination-Verification/1.0"})
+              with urlopen(request, timeout=30) as response:
+                  if response.status != 200:
+                      raise SystemExit("Discord destination verification did not return HTTP 200.")
+                  acknowledgement = json.loads(response.read(1_000_000))
+          except HTTPError as error:
+              status = error.code
+              error.close()
+              raise SystemExit(f"Discord destination verification failed (HTTP {status}).") from None
+          except (URLError, TimeoutError, OSError, ValueError):
+              raise SystemExit("Discord destination verification failed or returned an invalid acknowledgement.") from None
+          if not isinstance(acknowledgement, dict) or not all(
+              isinstance(acknowledgement.get(key), str) and acknowledgement[key].isascii() and acknowledgement[key].isdigit()
+              for key in ("id", "channel_id")
+          ):
+              raise SystemExit("Discord destination verification returned invalid message/channel IDs.")
+          print(json.dumps({"message_id": acknowledgement["id"], "channel_id": acknowledgement["channel_id"]}))
+          if expected and acknowledgement["channel_id"] != expected:
+              raise SystemExit("Discord acknowledged a channel different from expected_channel_id.")
+          PY
