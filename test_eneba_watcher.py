@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import datetime, timezone
 from pathlib import Path
 from unittest.mock import patch
@@ -241,6 +242,101 @@ class EnebaWatcherTests(unittest.TestCase):
         self.assertEqual(result["indonesia_eligible_offers"], 1)
         self.assertEqual(state, before)
         self.assertEqual(result["messages"][0]["allowed_mentions"], {"parse": []})
+        self.assertEqual(result["messages"][0]["avatar_url"], watcher.AVATAR_URL)
+
+    def test_requested_overview_reuses_current_images_regions_and_fees_without_acknowledging_normal_events(self):
+        data = snapshot([offer(COMPATIBLE, 581, True), offer(SIMPLE, 557, False)],
+                        watcher.campaigns_from_html(html(homepage()), now=NOW))
+        state = watcher.empty_state()
+        state["prices"][watcher.price_key(data["offers"][0])] = {"price_minor": 900, "currency": "EUR", "source_country": "ID", "at": watcher.stamp(NOW)}
+        state["notified"]["baseline:" + COMPATIBLE + ":ID"] = watcher.stamp(NOW)
+        pending = watcher.plan_events(data, state)
+        original = copy.deepcopy(state)
+        messages, checkpoints = [], []
+        def post(url, message):
+            messages.append(message)
+            return {"message_id": "123", "channel_id": "456", "token": "must-not-leak"}
+        result = watcher.run_overview(data, webhook="https://discord.invalid/secret", post=post, checkpoint=checkpoints.append)
+        self.assertTrue(result["announce_current"])
+        self.assertEqual(result["sent_overview_cards"], 3)
+        self.assertEqual(state, original)
+        self.assertEqual(watcher.plan_events(data, state), pending)
+        self.assertEqual(checkpoints, result["acknowledgments"])
+        for acknowledgment in checkpoints:
+            self.assertEqual(acknowledgment, {"message_id": "123", "channel_id": "456"})
+        embeds = [embed for message in messages for embed in message["embeds"]]
+        self.assertTrue(all("Current overview — requested refresh" in embed["description"] for embed in embeds))
+        self.assertTrue(all(embed.get("image") for embed in embeds))
+        self.assertFalse(any("First observed" in embed["description"] or "Observed listing-price drop" in embed["description"] for embed in embeds))
+        for message in messages:
+            self.assertEqual(message["avatar_url"], watcher.AVATAR_URL)
+            self.assertEqual(message["allowed_mentions"], {"parse": []})
+        offers = [embed for embed in embeds if "Minecoins Pack" in embed["title"]]
+        self.assertIn("Indonesia activation listed", offers[0]["fields"][0]["value"])
+        self.assertIn("Germany alternative only", offers[1]["fields"][0]["value"])
+        self.assertIn("checkout", offers[0]["fields"][2]["value"])
+
+    def test_overview_partial_failure_checkpoints_only_safe_delivery_ids_not_normal_history(self):
+        data = snapshot([offer(slug=f"sku-{index}", cents=500 + index) for index in range(14)])
+        for index, current in enumerate(data["offers"]):
+            current["coins"] = 1000 + index
+        normal_state = watcher.empty_state()
+        pending = watcher.plan_events(data, normal_state)
+        calls, acknowledged = [], []
+        def post(url, message):
+            calls.append(message)
+            if len(calls) == 2:
+                raise watcher.SourceError("simulated refresh delivery failure")
+            return {"message_id": "123", "channel_id": "456"}
+        with self.assertRaises(watcher.SourceError):
+            watcher.run_overview(data, webhook="https://discord.invalid/secret", post=post, checkpoint=acknowledged.append)
+        self.assertEqual(acknowledged, [{"message_id": "123", "channel_id": "456"}])
+        self.assertEqual(normal_state, watcher.empty_state())
+        self.assertEqual(watcher.plan_events(data, normal_state), pending)
+
+    def test_announce_current_dry_run_does_not_read_or_change_even_invalid_normal_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            fixture_file = Path(directory) / "fixture.json"
+            state_file = Path(directory) / "state.json"
+            fixture_file.write_text(json.dumps(snapshot([offer()])), encoding="utf8")
+            original = "normal-history-must-not-be-read-or-reset"
+            state_file.write_text(original, encoding="utf8")
+            env = dict(os.environ, DRY_RUN="true", ANNOUNCE_CURRENT="true", ENEBA_STATE_FILE=str(state_file))
+            env.pop("DISCORD_WEBHOOK_URL", None)
+            result = subprocess.run([sys.executable, str(Path(watcher.__file__).resolve()), "--fixture", str(fixture_file)], env=env, capture_output=True, text=True, check=True)
+            preview = json.loads(result.stdout)
+            self.assertTrue(preview["dry_run"])
+            self.assertTrue(preview["announce_current"])
+            self.assertIn("Current overview — requested refresh", preview["messages"][0]["content"])
+            self.assertEqual(state_file.read_text(encoding="utf8"), original)
+
+    def test_requested_overview_retains_source_failure_status_without_using_stale_history(self):
+        data = snapshot(errors=[{"source": "Minecoin search", "error": "public page HTTP 403; no offers inferred"}])
+        output = io.StringIO()
+        with patch.dict(os.environ, {"ANNOUNCE_CURRENT": "true", "DRY_RUN": "true"}, clear=True), \
+             patch.object(watcher, "collect", return_value=data), \
+             patch.object(watcher, "read_state", side_effect=AssertionError("overview read normal history")), \
+             patch.object(watcher, "save_state", side_effect=AssertionError("overview changed normal history")), \
+             redirect_stdout(output):
+            self.assertEqual(watcher.main([]), 1)
+        result = json.loads(output.getvalue())
+        self.assertTrue(result["announce_current"])
+        self.assertEqual(result["source_errors"], data["errors"])
+        embed = result["messages"][0]["embeds"][0]
+        self.assertIn("source unavailable", embed["title"])
+        self.assertIn("not reused as current", embed["fields"][0]["value"])
+
+    def test_announce_current_defaults_false(self):
+        output = io.StringIO()
+        with patch.dict(os.environ, {"DRY_RUN": "true"}, clear=True), \
+             patch.object(watcher, "collect", return_value=snapshot([offer()])), \
+             patch.object(watcher, "read_state", return_value=watcher.empty_state()) as read_history, \
+             patch.object(watcher, "run_overview", side_effect=AssertionError("unrequested overview")), \
+             redirect_stdout(output):
+            self.assertEqual(watcher.main([]), 0)
+        read_history.assert_called_once()
+        result = json.loads(output.getvalue())
+        self.assertNotIn("announce_current", result)
 
     def test_partial_discord_failure_saves_successful_batches_and_resumes_remaining(self):
         data = snapshot([offer(slug=f"sku-{index}", cents=500 + index) for index in range(14)])
