@@ -47,6 +47,7 @@ MERCHANTS = {
     "humble_us": ("Humble Store", "humblebundle.com"),
 }
 USER_AGENT = "Mozilla/5.0 (compatible; Pokemon-Price-Watcher/1.0)"
+AVATAR_URL = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/pokemon-avatar.png"
 
 
 def normalized(text):
@@ -447,7 +448,7 @@ def event_embed(event, account_country="", coverage=""):
             "Lowest listing found within this source/group. Not a delivered-total or all-time-low claim. " + coverage).strip()}}
 
 
-def make_batches(events, account_country="", coverage=""):
+def make_batches(events, account_country="", coverage="", content="Pokémon price and availability update"):
     batches, ids, embeds, size = [], [], [], 0
     for event in events:
         embed = event_embed(event, account_country, coverage)
@@ -455,14 +456,14 @@ def make_batches(events, account_country="", coverage=""):
         # 6000-character embed-text limit; also respect its 10-embed cap.
         length = len(json.dumps(embed, ensure_ascii=False))
         if embeds and (len(embeds) == 10 or size + length > 5500):
-            batches.append((ids, {"username": "Pokémon Price Watcher", "content": "Pokémon price and availability update",
+            batches.append((ids, {"username": "Pokémon Price Watcher", "avatar_url": AVATAR_URL, "content": content,
                                  "allowed_mentions": {"parse": []}, "embeds": embeds}))
             ids, embeds, size = [], [], 0
         ids.append(event["id"])
         embeds.append(embed)
         size += length
     if embeds:
-        batches.append((ids, {"username": "Pokémon Price Watcher", "content": "Pokémon price and availability update",
+        batches.append((ids, {"username": "Pokémon Price Watcher", "avatar_url": AVATAR_URL, "content": content,
                              "allowed_mentions": {"parse": []}, "embeds": embeds}))
     return batches
 
@@ -485,7 +486,37 @@ def send_discord(webhook, payload):
         raise RuntimeError("Discord webhook failed or returned an invalid acknowledgement.") from None
 
 
-def run(offers, state_path, *, dry_run=False, webhook=None, account_country="", coverage="", post=send_discord, now=None):
+def announce_overview(offers, *, dry_run=False, webhook=None, account_country="", coverage="", post=send_discord, now=None):
+    """Send a requested current snapshot without reading or changing alert history."""
+    observed_at = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
+    events = [{"id": str(index), "offer": offer,
+               "reason": "Current overview — requested refresh", "previous_price": None,
+               "observed_at": observed_at} for index, offer in enumerate(offers)]
+    batches = make_batches(events, account_country, coverage, "Pokémon current overview — requested refresh")
+    if dry_run:
+        for _, payload in batches:
+            print(json.dumps(payload, indent=2, ensure_ascii=False))
+        print(f"Dry run overview: {len(events)} price cards; no messages sent or history read/written.")
+        return []
+    if batches and not webhook:
+        raise RuntimeError("DISCORD_STEAM_WEBHOOK_URL secret is missing.")
+    acknowledgements = []
+    for _, payload in batches:
+        ack = post(webhook, payload)
+        if not isinstance(ack, dict) or not all(str(ack.get(k, "")).isdigit() for k in ("message_id", "channel_id")):
+            raise RuntimeError("Discord overview acknowledgement was invalid.")
+        acknowledgements.append(ack)
+        print(json.dumps(ack))
+    if not batches:
+        print("No fresh Pokemon prices available for the requested overview.")
+    return acknowledgements
+
+
+def run(offers, state_path, *, dry_run=False, webhook=None, account_country="", coverage="", post=send_discord, now=None,
+        announce_current=False):
+    if announce_current:
+        return announce_overview(offers, dry_run=dry_run, webhook=webhook, account_country=account_country,
+                                 coverage=coverage, post=post, now=now)
     state_path = Path(state_path)
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     observed_at = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
@@ -558,7 +589,8 @@ def main():
                     summary.write(f"- {label}: {error}\n")
     run(offers, Path(os.environ.get("POKEMON_STATE_FILE", ".pokemon-price-state.json")),
         dry_run=os.environ.get("DRY_RUN", "false").lower().strip() in ("true", "1", "yes"),
-        webhook=os.environ.get("DISCORD_WEBHOOK_URL"), account_country=account_country, coverage=coverage)
+        webhook=os.environ.get("DISCORD_WEBHOOK_URL"), account_country=account_country, coverage=coverage,
+        announce_current=os.environ.get("ANNOUNCE_CURRENT", "false").lower().strip() in ("true", "1", "yes"))
     if required:
         # Valid messages/state above are retained. The workflow's always-run
         # state-save step can commit checkpoints while exposing required gaps.
