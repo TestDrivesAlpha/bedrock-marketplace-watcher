@@ -1,0 +1,61 @@
+{
+  "version": 1,
+  "prices": {
+    "xbox-minecraft-minecoins-pack-330-coins-xbox-live-key-global|EUR|US": {
+      "price_minor": 249,
+      "currency": "EUR",
+      "source_country": "US",
+      "at": "2026-10-18T01:24:41.808950+00:00"
+    },
+    "xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global|EUR|US": {
+      "price_minor": 579,
+      "currency": "EUR",
+      "source_country": "US",
+      "at": "2026-10-18T01:24:41.808950+00:00"
+    },
+    "xbox-minecraft-minecoins-pack-3500-coins-xbox-one-xbox-live-key-global|EUR|US": {
+      "price_minor": 1111,
+      "currency": "EUR",
+      "source_country": "US",
+      "at": "2026-10-18T01:24:41.808950+00:00"
+    },
+    "xbox-minecraft-minecoins-pack-8800-coins-key-global|EUR|US": {
+      "price_minor": 3918,
+      "currency": "EUR",
+      "source_country": "US",
+      "at": "2026-10-18T01:24:41.808950+00:00"
+    },
+    "xbox-minecraft-minecoins-pack-330-coins-key-global|EUR|US": {
+      "price_minor": 249,
+      "currency": "EUR",
+      "source_country": "US",
+      "at": "2026-10-18T01:24:41.808950+00:00"
+    },
+    "xbox-minecraft-minecoins-pack-1720-coins-key-global|EUR|US": {
+      "price_minor": 558,
+      "currency": "EUR",
+      "source_country": "US",
+      "at": "2026-10-18T01:24:41.808950+00:00"
+    },
+    "xbox-minecraft-minecoins-pack-3500-coins-key-global|EUR|US": {
+      "price_minor": 1095,
+      "currency": "EUR",
+      "source_country": "US",
+      "at": "2026-10-18T01:24:41.808950+00:00"
+    }
+  },
+  "notified": {
+    "campaign:d070fe8f4f157091fd8cf353": "2026-10-18T01:24:41.808950+00:00",
+    "baseline:xbox-minecraft-minecoins-pack-330-coins-xbox-live-key-global:US": "2026-10-18T01:24:41.808950+00:00",
+    "baseline:xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global:US": "2026-10-18T01:24:41.808950+00:00",
+    "baseline:xbox-minecraft-minecoins-pack-3500-coins-xbox-one-xbox-live-key-global:US": "2026-10-18T01:24:41.808950+00:00",
+    "baseline:xbox-minecraft-minecoins-pack-8800-coins-key-global:US": "2026-10-18T01:24:41.808950+00:00",
+    "baseline:xbox-minecraft-minecoins-pack-330-coins-key-global:US": "2026-10-18T01:24:41.808950+00:00",
+    "baseline:xbox-minecraft-minecoins-pack-1720-coins-key-global:US": "2026-10-18T01:24:41.808950+00:00",
+    "baseline:xbox-minecraft-minecoins-pack-3500-coins-key-global:US": "2026-10-18T01:24:41.808950+00:00"
+  },
+  "campaigns": {
+    "d070fe8f4f157091fd8cf353": "2026-10-18T01:24:41.808950+00:00"
+  },
+  "failures": {}
+}
