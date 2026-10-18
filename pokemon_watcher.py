@@ -449,18 +449,21 @@ def event_embed(event, account_country="", coverage=""):
 
 
 def make_batches(events, account_country="", coverage="", content="Pokémon price and availability update"):
-    batches, ids, embeds, size = [], [], [], 0
+    batches, ids, embeds, size, urls = [], [], [], 0, set()
     for event in events:
         embed = event_embed(event, account_country, coverage)
         # Count every string, including URLs, conservatively below Discord's
         # 6000-character embed-text limit; also respect its 10-embed cap.
         length = len(json.dumps(embed, ensure_ascii=False))
-        if embeds and (len(embeds) == 10 or size + length > 5500):
+        # Discord renders only the first embed with a given URL in a message.
+        # Separate new/used cards sharing a retailer page into different posts.
+        if embeds and (len(embeds) == 10 or size + length > 5500 or embed["url"] in urls):
             batches.append((ids, {"username": "Pokémon Price Watcher", "avatar_url": AVATAR_URL, "content": content,
                                  "allowed_mentions": {"parse": []}, "embeds": embeds}))
-            ids, embeds, size = [], [], 0
+            ids, embeds, size, urls = [], [], 0, set()
         ids.append(event["id"])
         embeds.append(embed)
+        urls.add(embed["url"])
         size += length
     if embeds:
         batches.append((ids, {"username": "Pokémon Price Watcher", "avatar_url": AVATAR_URL, "content": content,
