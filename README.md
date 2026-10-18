@@ -33,15 +33,23 @@ in `.steam-sale-notified`.
 ## Eneba campaigns and Minecoin codes
 
 `deal-watchers.yml` checks hourly for broad sale campaigns featured on Eneba's
-Indonesia homepage and for observed listing-price drops on genuine Minecoin
+public homepage and for observed listing-price drops on genuine Minecoin
 prepaid codes. New offers establish an explicitly labelled baseline; a first
 observation is not claimed to be a discount or an all-time low.
+
+The public site can choose a storefront country from the runner's network location,
+even when the URL uses the Indonesian English locale. Alerts show the actual country
+from each source query as a regional reference. A foreign storefront price is not
+presented as a confirmed Indonesian checkout quote, and its campaign is not assumed
+to apply in Indonesia. Missing or ambiguous source-country data fails explicitly.
 
 Each product's published activation-country list is checked. Indonesia-listed
 codes appear first; Germany-only alternatives are clearly identified. A product
 called "Global" is not assumed to support Indonesia. Prices are pinned to EUR,
 before checkout fees; cashback is displayed separately and is not deducted from
-the price. The default notification threshold is a 1% drop for the same product.
+the price. The default notification threshold is a 1% drop for the same product,
+currency and actual storefront country. A change of storefront establishes a
+separate baseline rather than being called a price drop.
 
 The current FEST coupon terms are a dated snapshot captured on October 17, 2026,
 with the site's stated expiry. Its applicability to Minecoin codes is unverified.
