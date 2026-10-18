@@ -15,7 +15,7 @@ STORE_URL = "https://store.steampowered.com/specials/"
 HOME_URL = "https://store.steampowered.com/?l=english"
 STEAM_LOGO = "https://store.fastly.steamstatic.com/public/shared/images/responsive/share_steam_logo.png"
 SCHEDULE_SOURCE = "https://partner.steamgames.com/doc/marketing/upcoming_events"
-AVATAR_URL = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/steam-catgirl-avatar.png"
+AVATAR_URL = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/steam-catgirl-glam-avatar.png"
 
 # Existing event IDs and dates are retained. Valve's official schedule was
 # checked on 2026-10-17; the original 10 AM Pacific start/end times are retained.

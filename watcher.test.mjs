@@ -126,7 +126,7 @@ test("all items fit Discord limits and only acknowledged batches are checkpointe
     assert.ok(batch.length <= 10);
     const message = watcher.discordPayload(batch);
     assert.equal(message.username, "Bedrock Sale Watcher");
-    assert.equal(message.avatar_url, "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/minecraft-avatar.png");
+    assert.equal(message.avatar_url, "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/alex-marketplace-avatar.png");
     const embeds = message.embeds;
     const size = embeds.reduce((sum, embed) => sum + embed.title.length + embed.description.length + embed.footer.text.length + embed.fields.reduce((n, f) => n + f.name.length + f.value.length, 0), 0);
     assert.ok(size <= 6000);
