@@ -24,7 +24,7 @@ jobs:
     timeout-minutes: 15
     strategy:
       fail-fast: false
-      # Both watchers use the same existing Discord webhook. Avoid delivery bursts.
+      # Serialize repository checkpoint writes from the two watchers.
       max-parallel: 1
       matrix:
         include:
@@ -32,10 +32,12 @@ jobs:
             script: eneba_watcher.py
             tests: test_eneba_watcher.py
             state: .eneba-price-state.json
+            webhook_secret: DISCORD_ENEBA_WEBHOOK_URL
           - label: Pokemon games and DLC
             script: pokemon_watcher.py
             tests: test_pokemon_watcher.py
             state: .pokemon-price-state.json
+            webhook_secret: DISCORD_POKEMON_WEBHOOK_URL
     env:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
@@ -56,7 +58,8 @@ jobs:
       - name: Check current offers
         id: offers
         env:
-          DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_STEAM_WEBHOOK_URL }}
+          DISCORD_WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
+          WEBHOOK_SECRET_NAME: ${{ matrix.webhook_secret }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
           ENEBA_COUNTRY: ID
           ENEBA_ALT_COUNTRY: DE
@@ -66,7 +69,12 @@ jobs:
           POKEMON_STATE_FILE: .pokemon-price-state.json
           # Unknown: the user's email and physical location do not establish this.
           NINTENDO_ACCOUNT_COUNTRY: ""
-        run: python -B "${{ matrix.script }}"
+        run: |
+          if [ "$DRY_RUN" != "true" ] && [ -z "$DISCORD_WEBHOOK_URL" ]; then
+            echo "::error::Required repository secret $WEBHOOK_SECRET_NAME is missing."
+            exit 1
+          fi
+          python -B "${{ matrix.script }}"
 
       - name: Save observed prices and delivery checkpoints
         if: ${{ !cancelled() && (steps.offers.outcome == 'success' || steps.offers.outcome == 'failure') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
