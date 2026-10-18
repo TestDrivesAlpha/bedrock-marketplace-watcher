@@ -56,7 +56,7 @@ jobs:
           artwork = {
               "Minecraft": ("minecraft", "MINECRAFT MARKETPLACE", "Minecraft Bedrock Marketplace packs, creators, Minecoin prices, promotion dates and direct product links.", 0x4D9637),
               "Steam": ("steam", "STEAM SALES", "Major Steam seasonal sale dates, official sale artwork and links to the current Steam discounts.", 0x1B9BDF),
-              "Eneba": ("eneba", "ENEBA DEALS", "Featured Eneba campaigns and Minecoin prepaid-code listings, with activation countries, storefront references and checkout fees shown separately.", 0xF08A34),
+              "Eneba": ("eneba", "ENEBA SALES", "Featured Eneba campaigns and Minecoin prepaid-code listings, with activation countries, storefront references and checkout fees shown separately.", 0xF08A34),
               "Pokemon": ("pokemon", "POKÉMON SALES", "Pokémon Sword, Pokémon Violet and their matching DLC: observed prices, format, condition, regional availability and source links.", 0x7B45BB),
           }
           destination = os.environ["DISCORD_DESTINATION"]
