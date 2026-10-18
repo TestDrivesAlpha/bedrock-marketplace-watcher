@@ -262,6 +262,18 @@ class AlertTests(unittest.TestCase):
             self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
             self.assertLessEqual(len(payload["embeds"]), 10)
             self.assertLessEqual(sum(len(json.dumps(embed, ensure_ascii=False)) for embed in payload["embeds"]), 5500)
+            self.assertEqual(len({embed["url"] for embed in payload["embeds"]}), len(payload["embeds"]))
+
+    def test_new_and_used_cards_sharing_product_url_are_sent_in_separate_messages(self):
+        current = [offer(condition="new", price=4500), offer(condition="used", price=3200)]
+        events = watcher.prepare_events({}, current, self.now.isoformat())["pending"]
+        batches = watcher.make_batches(events)
+        self.assertEqual(len(batches), 2)
+        self.assertEqual([event_id for ids, _ in batches for event_id in ids], [event["id"] for event in events])
+        embeds = [embed for _, payload in batches for embed in payload["embeds"]]
+        self.assertEqual([embed["url"] for embed in embeds], [offer()["url"], offer()["url"]])
+        self.assertIn("physical · new", embeds[0]["description"])
+        self.assertIn("physical · used", embeds[1]["description"])
 
     def test_unknown_or_mismatched_account_labels_digital_reference(self):
         event = watcher.prepare_events({}, [offer(format="digital")], self.now.isoformat())["pending"][0]
