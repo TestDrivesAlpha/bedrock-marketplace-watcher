@@ -54,8 +54,8 @@ jobs:
               "Pokemon": "Pokémon Price Watcher",
           }
           artwork = {
-              "Minecraft": ("minecraft", "MINECRAFT MARKETPLACE", "Minecraft Bedrock Marketplace packs, creators, Minecoin prices, promotion dates and direct product links.", 0x4D9637),
-              "Steam": ("steam-catgirl", "STEAM SALES", "Major Steam seasonal sale dates, official sale artwork and links to the current Steam discounts.", 0x1B9BDF),
+              "Minecraft": ("alex-marketplace", "MINECRAFT MARKETPLACE", "Minecraft Bedrock Marketplace packs, creators, Minecoin prices, promotion dates and direct product links.", 0x4D9637),
+              "Steam": ("steam-catgirl-glam", "STEAM SALES", "Major Steam seasonal sale dates, official sale artwork and links to the current Steam discounts.", 0x1B9BDF),
               "Eneba": ("eneba", "ENEBA SALES", "Featured Eneba campaigns and Minecoin prepaid-code listings, with activation countries, storefront references and checkout fees shown separately.", 0xF08A34),
               "Pokemon": ("pokemon", "POKÉMON SALES", "Pokémon Sword, Pokémon Violet and their matching DLC: observed prices, format, condition, regional availability and source links.", 0x7B45BB),
           }
@@ -103,7 +103,7 @@ jobs:
                       avatar = response.read(8_000_001)
                   if len(avatar) >= 8_000_000 or not avatar.startswith(b"\x89PNG\r\n\x1a\n"):
                       raise SystemExit("Avatar asset must be a PNG smaller than 8 MB; artwork was not changed.")
-                  update = {"avatar": "data:image/png;base64," + base64.b64encode(avatar).decode("ascii")}
+                  update = {"name": usernames[destination], "avatar": "data:image/png;base64," + base64.b64encode(avatar).decode("ascii")}
                   update_request = Request(control_url, data=json.dumps(update).encode("utf-8"), method="PATCH",
                                            headers={"Content-Type": "application/json", "User-Agent": "Discord-Destination-Verification/1.0"})
                   with urlopen(update_request, timeout=30) as response:
@@ -113,7 +113,7 @@ jobs:
                   if not isinstance(updated, dict) or not all(
                       isinstance(updated.get(key), str) and updated[key].isascii() and updated[key].isdigit()
                       for key in ("id", "channel_id")
-                  ) or updated["id"] != identity["id"] or updated["channel_id"] != identity["channel_id"] or not isinstance(updated.get("avatar"), str) or not updated["avatar"]:
+                  ) or updated["id"] != identity["id"] or updated["channel_id"] != identity["channel_id"] or updated.get("name") != usernames[destination] or not isinstance(updated.get("avatar"), str) or not updated["avatar"]:
                       raise SystemExit("Webhook avatar update was not confirmed; no header was posted.")
                   payload.update({
                       "content": "**Channel header — " + title + "**",
