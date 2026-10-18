@@ -51,7 +51,7 @@ def fixture(slug=SIMPLE, cents=557, compatible=False, stock=True):
     detail["countriesAlpha2"] = ["DE", "GB", "US"] + (["ID"] if compatible else [])
     detail["blockedCountries"] = []
     detail["notes"] = ["A Microsoft/Xbox account is required for redemption."]
-    details = {"ROOT_QUERY": {key("footerPayments"): []}, "Product::" + slug: detail}
+    details = {"ROOT_QUERY": {key("footerPayments"): [], key("product"): {"__ref": "Product::" + slug}}, "Product::" + slug: detail}
     return state, details
 
 
@@ -103,8 +103,10 @@ class EnebaWatcherTests(unittest.TestCase):
         wrong_currency["Auction::public-auction"]['price({"currency":"EUR"})']["currency"] = "IDR"
         with self.assertRaises(watcher.SourceError):
             watcher.offers_from_html(html(wrong_currency))
+        missing_country = copy.deepcopy(search)
+        missing_country["ROOT_QUERY"] = {key("search", {"context": {"language": "en_ID"}}): next(iter(search["ROOT_QUERY"].values()))}
         with self.assertRaises(watcher.SourceError):
-            watcher.apollo_state(html(search), "DE")
+            watcher.offers_from_html(html(missing_country))
         for body in ["<html>Verify you are human</html>", "<html>Access denied</html>", html({"ROOT_QUERY": {key("footerPayments"): []}})]:
             with self.assertRaises(watcher.SourceError):
                 watcher.offers_from_html(body)
@@ -123,6 +125,41 @@ class EnebaWatcherTests(unittest.TestCase):
         del details["Product::" + SIMPLE]["countriesAlpha2"]
         with self.assertRaises(watcher.SourceError):
             watcher.enrich_offer(listing, html(details))
+
+    def test_server_country_mismatch_is_a_labelled_reference_with_independent_indonesia_activation(self):
+        search, details = fixture(COMPATIBLE, 581, True)
+        result = next(iter(search["ROOT_QUERY"].values()))
+        search["ROOT_QUERY"] = {key("search", {"context": {"country": "US", "language": "en_ID", "region": "global"}}): result,
+                                key("footerPayments"): []}
+        detail_product = details["Product::" + COMPATIBLE]
+        details["ROOT_QUERY"] = {key("product", {"context": {"country": "US", "language": "en_ID"}}): {"__ref": "Product::" + COMPATIBLE}}
+        current = watcher.enrich_offer(watcher.offers_from_html(html(search))[0][0], html(details))
+        self.assertEqual(current["source_country"], "US")
+        self.assertEqual(current["activation_source_country"], "US")
+        self.assertTrue(watcher.eligible(current, "ID"))
+        description = watcher.offer_embed(current)["description"]
+        self.assertIn("US storefront context", description)
+        self.assertIn("not a verified Indonesian checkout quote", description)
+        home = homepage()
+        slider = next(iter(home["ROOT_QUERY"].values()))
+        home["ROOT_QUERY"] = {key("Slider_sliders", {"context": {"country": "US", "language": "en_ID"}}): slider}
+        campaign = watcher.campaigns_from_html(html(home), now=NOW)[0]
+        self.assertIn("US storefront context", watcher.campaign_embed(campaign)["description"])
+        self.assertNotIn("Indonesia homepage", watcher.campaign_embed(campaign)["description"])
+        self.assertIn("Applicability to this storefront is unverified", watcher.campaign_embed(campaign)["fields"][1]["value"])
+        self.assertEqual(detail_product["countriesAlpha2"][-1], "ID")
+
+    def test_missing_or_ambiguous_relevant_storefront_countries_fail_even_if_other_queries_have_indonesia(self):
+        search, _ = fixture()
+        result = next(iter(search["ROOT_QUERY"].values()))
+        for root in [
+            {key("footerPayments"): [], key("search", {"context": {"language": "en_ID"}}): result},
+            {key("search"): result, key("search", {"context": {"country": "US"}}): result},
+        ]:
+            changed = copy.deepcopy(search)
+            changed["ROOT_QUERY"] = root
+            with self.assertRaises(watcher.SourceError):
+                watcher.offers_from_html(html(changed))
 
     def test_featured_broad_campaign_has_cover_and_dated_coupon_terms_not_minecoin_promise(self):
         campaigns = watcher.campaigns_from_html(html(homepage()), now=NOW)
@@ -158,8 +195,8 @@ class EnebaWatcherTests(unittest.TestCase):
     def test_drop_uses_same_sku_observed_price_and_does_not_subtract_cashback(self):
         current = offer(cents=500)
         state = watcher.empty_state()
-        state["notified"]["baseline:" + COMPATIBLE] = watcher.stamp(NOW)
-        state["prices"][COMPATIBLE] = {"price_minor": 600, "currency": "EUR", "at": watcher.stamp(NOW)}
+        state["notified"]["baseline:" + COMPATIBLE + ":ID"] = watcher.stamp(NOW)
+        state["prices"][watcher.price_key(current)] = {"price_minor": 600, "currency": "EUR", "source_country": "ID", "at": watcher.stamp(NOW)}
         events = watcher.plan_events(snapshot([current]), state)
         self.assertEqual(len(events), 1)
         self.assertIn("16.7%", events[0]["embed"]["description"])
@@ -167,6 +204,32 @@ class EnebaWatcherTests(unittest.TestCase):
         self.assertEqual(watcher.plan_events(snapshot([same_price]), state), [])
         tiny_drop = dict(current, price_minor=599)
         self.assertEqual(watcher.plan_events(snapshot([tiny_drop]), state), [])
+
+    def test_different_storefront_prices_are_not_called_a_price_drop(self):
+        current = offer(cents=500)
+        state = watcher.empty_state()
+        state["prices"][watcher.price_key(dict(current, source_country="US"))] = {"price_minor": 600, "currency": "EUR", "source_country": "US", "at": watcher.stamp(NOW)}
+        state["notified"]["baseline:" + COMPATIBLE + ":US"] = watcher.stamp(NOW)
+        events = watcher.plan_events(snapshot([current]), state)
+        self.assertEqual(len(events), 1)
+        self.assertIn("baseline; no price discount is claimed", events[0]["embed"]["description"])
+        state["notified"]["baseline:" + COMPATIBLE + ":ID"] = watcher.stamp(NOW)
+        self.assertEqual(watcher.plan_events(snapshot([current]), state), [])
+
+    def test_alternating_runner_storefronts_keep_each_countrys_price_history(self):
+        saved = []
+        state = watcher.empty_state()
+        for current in [offer(cents=600), dict(offer(cents=900), source_country="US")]:
+            watcher.run(snapshot([current]), state, webhook="https://discord.invalid/secret", now=NOW,
+                        post=lambda *args: {"message_id": "1", "channel_id": "2"},
+                        save=lambda value: saved.append(copy.deepcopy(value)))
+            state = saved[-1]
+        lower = offer(cents=500)
+        self.assertEqual(len(state["prices"]), 2)
+        events = watcher.plan_events(snapshot([lower]), state)
+        self.assertEqual(len(events), 1)
+        self.assertIn("EUR 6.00", events[0]["embed"]["description"])
+        self.assertNotIn("EUR 9.00", events[0]["embed"]["description"])
 
     def test_dry_run_has_no_post_no_save_and_no_state_mutation(self):
         state = watcher.empty_state()
