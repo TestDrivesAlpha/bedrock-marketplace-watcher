@@ -360,6 +360,61 @@ class AlertTests(unittest.TestCase):
 
 
 class HealthTests(unittest.TestCase):
+    def test_retention_snapshot_keeps_healthy_item_country_scopes_when_others_fail(self):
+        errors = ["deku/pokemon-sword/DE: ValueError", "playasia/pokemon-violet/JP import: HTTP 403",
+                  "pse/pokemon-violet/ID: HTTP 403"]
+        now = datetime.fromisoformat("2026-10-18T01:00:00+00:00")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "current.json"
+            watcher.export_retention_snapshot([offer()], errors, ("DE", "US"), now, path)
+            snapshot = json.loads(path.read_text(encoding='utf-8'))
+        self.assertTrue(snapshot["coverage"]["deku/pokemon-violet/DE"])
+        self.assertTrue(snapshot["coverage"]["deku/pokemon-sword/US"])
+        self.assertFalse(snapshot["coverage"]["deku/pokemon-sword/DE"])
+        self.assertFalse(snapshot["coverage"]["playasia/pokemon-violet/JP import"])
+        self.assertFalse(snapshot["coverage"]["pse/pokemon-violet/ID"])
+        embed = snapshot["items"][watcher.offer_key(offer())]["embed"]
+        self.assertIn("Current price — refreshed after 60 days", embed["description"])
+        self.assertNotIn("lowest observed", embed["description"])
+
+    def test_retention_unavailable_is_inactive_but_unknown_retries(self):
+        now = datetime.fromisoformat("2026-10-18T01:00:00+00:00")
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "current.json"
+            watcher.export_retention_snapshot([offer(stock="unavailable")], [], ("DE", "US"), now, path)
+            unavailable = json.loads(path.read_text(encoding='utf-8'))
+            self.assertTrue(unavailable["coverage"]["deku/pokemon-violet/DE"])
+            self.assertEqual(unavailable["items"], {})
+            watcher.export_retention_snapshot([offer(stock="unknown")], [], ("DE", "US"), now, path)
+            unknown = json.loads(path.read_text(encoding='utf-8'))
+            self.assertFalse(unknown["coverage"]["deku/pokemon-violet/DE"])
+            self.assertEqual(unknown["items"], {})
+
+    def test_retention_journals_normal_and_manual_overview_without_corrupting_price_history(self):
+        now = datetime.fromisoformat("2026-10-18T01:00:00+00:00")
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            state = Path(directory) / "state.json"
+            journal = Path(directory) / "posts.json"
+            watcher.run([offer()], state, webhook="https://discord.invalid/hook", now=now, journal_path=journal,
+                        post=lambda *args: {"message_id": "123", "channel_id": "456"})
+            original = state.read_bytes()
+            watcher.run([offer(price=4000)], state, webhook="https://discord.invalid/hook", now=now, journal_path=journal,
+                        announce_current=True, post=lambda *args: {"message_id": "124", "channel_id": "456"})
+            records = json.loads(journal.read_text(encoding='utf-8'))["messages"]
+            self.assertEqual(state.read_bytes(), original)
+        self.assertEqual(records["123"]["items"], records["124"]["items"])
+        self.assertEqual(records["124"]["purpose"], "overview")
+
+    def test_retention_dry_run_never_reads_or_changes_journal(self):
+        with tempfile.TemporaryDirectory() as directory, contextlib.redirect_stdout(io.StringIO()):
+            state = Path(directory) / "state.json"
+            journal = Path(directory) / "posts.json"
+            journal.write_text("keep exactly")
+            for overview in (False, True):
+                watcher.run([offer()], state, dry_run=True, announce_current=overview, journal_path=journal)
+            self.assertEqual(journal.read_text(encoding='utf-8'), "keep exactly")
+            self.assertFalse(state.exists())
+
     def test_main_parses_announce_current_as_explicit_boolean(self):
         for value, expected in (("true", True), ("false", False)):
             with self.subTest(value=value), \

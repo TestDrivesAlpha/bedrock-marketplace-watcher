@@ -422,6 +422,55 @@ class EnebaWatcherTests(unittest.TestCase):
             self.assertTrue(json.loads(result.stdout)["dry_run"])
             self.assertEqual(state_file.read_text(encoding="utf8"), original)
 
+    def test_retention_normal_and_overview_register_same_comparable_key_without_price_reset(self):
+        current = offer()
+        data = snapshot([current])
+        state = watcher.empty_state()
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "posts.json"
+            watcher.run(data, state, webhook="https://discord.invalid/hook", now=NOW,
+                        post=lambda *args: {"message_id": "123", "channel_id": "456"}, journal_path=path)
+            watcher.run_overview(data, webhook="https://discord.invalid/hook", now=NOW,
+                                 post=lambda *args: {"message_id": "124", "channel_id": "456"}, journal_path=path)
+            records = json.loads(path.read_text(encoding='utf-8'))["messages"]
+        self.assertEqual(records["123"]["items"], records["124"]["items"])
+        self.assertEqual(records["123"]["items"], [{"key": "offer:" + watcher.price_key(current), "scope": "eneba-minecoins:ID:EUR"}])
+        self.assertEqual(records["124"]["purpose"], "overview")
+        self.assertEqual(state, watcher.empty_state())
+
+    def test_retention_complete_collection_and_partial_failures_have_independent_coverage(self):
+        search, details = fixture(COMPATIBLE, 581, True)
+        def fetcher(url):
+            return html(search if "/store/" in url else details if COMPATIBLE in url else homepage())
+        current = watcher.collect(fetcher=fetcher, now=NOW)
+        self.assertTrue(current["retention_coverage"]["eneba-campaigns:ID"])
+        self.assertTrue(current["retention_coverage"]["eneba-minecoins:ID:EUR"])
+        def failed_product(url):
+            if COMPATIBLE in url:
+                raise watcher.SourceError("blocked product activation page")
+            return fetcher(url)
+        partial = watcher.collect(fetcher=failed_product, now=NOW)
+        self.assertTrue(partial["retention_coverage"]["eneba-campaigns:ID"])
+        self.assertFalse(partial["retention_coverage"]["eneba-minecoins:ID:EUR"])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "current.json"
+            watcher.export_retention_snapshot(current, NOW, path)
+            exported = json.loads(path.read_text(encoding='utf-8'))
+        price = exported["items"]["offer:" + watcher.price_key(current["offers"][0])]["embed"]
+        self.assertIn("Current price — refreshed after 60 days", price["description"])
+        self.assertNotIn("First observed", price["description"])
+        self.assertNotIn("Observed listing-price drop", price["description"])
+
+    def test_retention_dry_run_does_not_read_or_write_journal(self):
+        data = snapshot([offer()])
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "posts.json"
+            path.write_text("keep byte for byte")
+            with patch.dict(os.environ, {"DISCORD_RETENTION_FILE": str(path)}):
+                watcher.run(data, watcher.empty_state(), dry_run=True)
+                watcher.run_overview(data, dry_run=True)
+            self.assertEqual(path.read_text(encoding='utf-8'), "keep byte for byte")
+
 
 if __name__ == "__main__":
     unittest.main()

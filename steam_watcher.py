@@ -9,6 +9,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+from discord_retention import record_message, write_snapshot
+
 STORE_URL = "https://store.steampowered.com/specials/"
 HOME_URL = "https://store.steampowered.com/?l=english"
 STEAM_LOGO = "https://store.fastly.steamstatic.com/public/shared/images/responsive/share_steam_logo.png"
@@ -88,6 +90,7 @@ def build_payload(sale, html=""):
     end = int(datetime.fromisoformat(sale["end"]).timestamp())
     image_url, event_artwork = event_image(sale, html)
     return {
+        "username": "Steam Sale Watcher",
         "content": "A major Steam seasonal sale is live!",
         "avatar_url": AVATAR_URL,
         "allowed_mentions": {"parse": []},
@@ -121,40 +124,68 @@ def send_discord(webhook, payload):
                                "User-Agent": "Steam-Sale-Watcher/2.0"})
     try:
         with urlopen(request, timeout=30) as response:
-            if not 200 <= response.status < 300:
-                raise RuntimeError(f"Discord webhook failed (HTTP {response.status}).")
+            acknowledgment = json.loads(response.read(1_000_000))
+            if response.status != 200 or not isinstance(acknowledgment, dict) or not all(
+                    str(acknowledgment.get(key, "")).isdigit() for key in ("id", "channel_id")):
+                raise RuntimeError("Discord did not return a valid message acknowledgement.")
+            return {"message_id": str(acknowledgment["id"]),
+                    "channel_id": str(acknowledgment["channel_id"])}
     except HTTPError as error:
         raise RuntimeError(f"Discord webhook failed (HTTP {error.code}).") from None
-    except (URLError, TimeoutError):
+    except (URLError, TimeoutError, ValueError):
         # Do not include an exception containing the secret webhook URL in logs.
         raise RuntimeError("Discord webhook failed (network error).") from None
 
 
 def check_sales(now, state_file, *, dry_run=False, webhook=None,
-                fetch_html=fetch_homepage, post_payload=send_discord, sales=SALES):
+                fetch_html=fetch_homepage, post_payload=send_discord, sales=SALES,
+                journal_path=None, snapshot_path=None):
     if now.tzinfo is None or now.utcoffset() is None:
         raise ValueError("Current time must include a timezone.")
     state_file = Path(state_file)
     notified = set(state_file.read_text(encoding="utf-8").split()) if state_file.exists() else set()
-    count = 0
-    for sale in sales:
-        start = datetime.fromisoformat(sale["start"])
-        end = datetime.fromisoformat(sale["end"])
-        if not start <= now < end or sale["id"] in notified:
+    journal_path = journal_path or os.environ.get("DISCORD_RETENTION_FILE")
+    snapshot_path = snapshot_path or os.environ.get("DISCORD_RETENTION_SNAPSHOT")
+    active = [sale for sale in sales if datetime.fromisoformat(sale["start"]) <= now < datetime.fromisoformat(sale["end"])]
+    payloads = {}
+    # Include already-announced sales: retention must recheck their current
+    # status independently of the permanent notification/deduplication history.
+    for sale in active:
+        if sale["id"] in notified and not snapshot_path:
             continue
         try:
             html = fetch_html()
         except (HTTPError, URLError, TimeoutError, OSError):
             print("Steam artwork unavailable; using the official Steam logo.")
             html = ""
-        payload = build_payload(sale, html)
+        payloads[sale["id"]] = build_payload(sale, html)
+    if snapshot_path:
+        items = {}
+        for sale in active:
+            embed = json.loads(json.dumps(payloads[sale["id"]]["embeds"][0]))
+            embed["description"] = "**Still available — refreshed after 60 days**\n" + embed["description"]
+            items[sale["id"]] = {"scope": "steam-schedule", "embed": embed, "ends_at": sale["end"]}
+        write_snapshot(snapshot_path, {"version": 1, "destination": "steam", "observed_at": now.isoformat(),
+            "identity": {"username": "Steam Sale Watcher", "avatar_url": AVATAR_URL,
+                         "content": "Steam seasonal sale status — refreshed after 60 days"},
+            "coverage": {"steam-schedule": True}, "items": items})
+    count = 0
+    for sale in sales:
+        start = datetime.fromisoformat(sale["start"])
+        end = datetime.fromisoformat(sale["end"])
+        if not start <= now < end or sale["id"] in notified:
+            continue
+        payload = payloads[sale["id"]]
         if dry_run:
             print(json.dumps(payload, indent=2))
             count += 1
             continue
         if not webhook:
             raise RuntimeError("DISCORD_STEAM_WEBHOOK_URL secret is missing.")
-        post_payload(webhook, payload)
+        acknowledgment = post_payload(webhook, payload)
+        if journal_path:
+            record_message(journal_path, acknowledgment,
+                           [{"key": sale["id"], "scope": "steam-schedule"}], now=now)
         # Persist after confirmed success, never for a preview or failed send.
         notified.add(sale["id"])
         temporary = state_file.with_name(state_file.name + ".tmp")

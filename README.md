@@ -132,3 +132,51 @@ python -m unittest -v test_eneba_watcher.py test_pokemon_watcher.py
 The tests use fixtures and mocked webhook requests. They do not post messages.
 Each scheduled workflow runs its tests before checking for sales. Keep webhook
 URLs in GitHub repository secrets; do not put them in source files or logs.
+
+## Automatic 60-day message retention
+
+All four watchers track acknowledged Discord alerts separately from their price
+and notification history. Scheduled checks use fresh source evidence to maintain
+ordinary tracked alerts after 60 days:
+
+- If an offer remains eligible, publish a clearly labelled current refresh first,
+  then delete the old message after the replacement is acknowledged.
+- If the offer no longer qualifies and its source was checked successfully,
+  delete the old message without announcing a new sale.
+- If a source is unavailable or its evidence is stale, keep the affected old
+  message and retry during a later check. A failed retailer check does not mean
+  the price or sale ended.
+- Keep pinned messages, including channel artwork. Cleanup checks the current
+  Discord message before deleting it and only handles messages belonging to
+  that destination's webhook and recorded channel.
+
+For price comparisons, the refresh uses the currently selected listing for the
+same comparison group. The retailer or price may have changed. A refreshed price
+is labelled as a current observation; it does not claim a new price drop unless
+the ordinary price watcher independently detects one. Refreshes suppress mentions.
+
+Deleting a Discord message does not clear the watcher's sale or price history.
+That history remains available for duplicate protection and later comparisons.
+Message journals are `.discord-posts-minecraft.json`, `.discord-posts-steam.json`,
+`.discord-posts-eneba.json`, and `.discord-posts-pokemon.json`. Only alerts with
+recorded, acknowledged Discord message IDs can be cleaned up. Earlier untracked
+posts are not automatically discovered by the webhook. Twenty verified existing
+alerts were imported with their original posting dates during setup: one Steam,
+two Marketplace, six Eneba and eleven Pokemon messages. Channel banners and
+routing-test messages are not added to the alert journals.
+
+The workflows enable `RETENTION_ENABLED=true` with `RETENTION_DAYS=60`, pass
+`DISCORD_RETENTION_FILE` for the journal and `DISCORD_RETENTION_SNAPSHOT` for an
+ephemeral current-source snapshot, and save delivery/cleanup checkpoints even
+when a later source or delivery fails. Snapshots are not committed. A partial
+refresh is checkpointed so retries can reuse already acknowledged replacements
+rather than blindly posting them again.
+
+Run any sale workflow with its default `dry_run=true` to preview source checks
+and due cleanup without posting, deleting, or modifying persisted history. A dry
+run can write only its disposable snapshot for that preview. Offline retention
+tests use mock Discord requests:
+
+```sh
+python -B -m unittest -v test_discord_retention.py
+```

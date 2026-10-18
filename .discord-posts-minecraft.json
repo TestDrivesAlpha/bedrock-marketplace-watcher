@@ -1,0 +1,31 @@
+{
+  "messages": {
+    "1560340113769103411": {
+      "channel_id": "1557423972633808996",
+      "created_at": "2026-10-15T17:14:32.840000Z",
+      "items": [
+        {
+          "key": "af73acc8-ae5b-4521-87b4-d95afd337869",
+          "scope": "minecraft:catalog"
+        }
+      ],
+      "message_id": "1560340113769103411",
+      "purpose": "alert",
+      "replacement_ids": []
+    },
+    "1561039288831836292": {
+      "channel_id": "1557423972633808996",
+      "created_at": "2026-10-17T15:32:49.165000Z",
+      "items": [
+        {
+          "key": "af73acc8-ae5b-4521-87b4-d95afd337869",
+          "scope": "minecraft:catalog"
+        }
+      ],
+      "message_id": "1561039288831836292",
+      "purpose": "alert",
+      "replacement_ids": []
+    }
+  },
+  "version": 1
+}

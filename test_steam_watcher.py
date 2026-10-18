@@ -1,10 +1,11 @@
 import contextlib
 import io
+import json
 import tempfile
 import unittest
 from datetime import datetime
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 from urllib.error import URLError
 
 import steam_watcher as watcher
@@ -42,7 +43,7 @@ class SteamWatcherTests(unittest.TestCase):
         self.state.write_text("autumn-2026\nwinter-2026\n", encoding="utf-8")
         self.assertEqual(self.run_check(), 0)
         self.post.assert_not_called()
-        self.assertEqual(self.state.read_text(), "autumn-2026\nwinter-2026\n")
+        self.assertEqual(self.state.read_text(encoding='utf-8'), "autumn-2026\nwinter-2026\n")
 
     def test_success_embeds_image_link_and_saves_existing_history(self):
         self.state.write_text("autumn-2026\n", encoding="utf-8")
@@ -54,21 +55,21 @@ class SteamWatcherTests(unittest.TestCase):
         self.assertEqual(embed["url"], "https://store.steampowered.com/specials/")
         self.assertEqual(payload["allowed_mentions"], {"parse": []})
         self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
-        self.assertIn("autumn-2026", self.state.read_text())
-        self.assertIn("winter-2026", self.state.read_text())
+        self.assertIn("autumn-2026", self.state.read_text(encoding='utf-8'))
+        self.assertIn("winter-2026", self.state.read_text(encoding='utf-8'))
 
     def test_dry_run_does_not_send_or_advance_history(self):
         self.state.write_text("autumn-2026\n", encoding="utf-8")
         self.assertEqual(self.run_check(dry_run=True), 1)
         self.post.assert_not_called()
-        self.assertEqual(self.state.read_text(), "autumn-2026\n")
+        self.assertEqual(self.state.read_text(encoding='utf-8'), "autumn-2026\n")
 
     def test_failed_webhook_does_not_advance_history(self):
         self.state.write_text("autumn-2026\n", encoding="utf-8")
         self.post.side_effect = RuntimeError("Discord webhook failed (HTTP 500).")
         with self.assertRaises(RuntimeError):
             self.run_check()
-        self.assertEqual(self.state.read_text(), "autumn-2026\n")
+        self.assertEqual(self.state.read_text(encoding='utf-8'), "autumn-2026\n")
 
     def test_artwork_fetch_failure_still_sends_logo(self):
         self.fetch.side_effect = URLError("offline")
@@ -99,6 +100,56 @@ class SteamWatcherTests(unittest.TestCase):
     def test_schedule_retains_all_original_events(self):
         self.assertEqual([sale["id"] for sale in watcher.SALES],
                          ["autumn-2026", "winter-2026", "spring-2027", "summer-2027"])
+
+    def test_retention_records_ack_without_resetting_normal_history(self):
+        journal = Path(self.directory.name) / "posts.json"
+        self.post.return_value = {"message_id": "123", "channel_id": "456"}
+        self.assertEqual(self.run_check(journal_path=journal), 1)
+        record = json.loads(journal.read_text(encoding='utf-8'))["messages"]["123"]
+        self.assertEqual(record["items"], [{"key": self.sale["id"], "scope": "steam-schedule"}])
+        self.assertIn(self.sale["id"], self.state.read_text(encoding='utf-8'))
+        self.assertEqual(self.run_check(journal_path=journal), 0)
+        self.assertEqual(len(json.loads(journal.read_text(encoding='utf-8'))["messages"]), 1)
+
+    def test_retention_snapshot_rechecks_announced_sale_and_confirms_ended_sale(self):
+        snapshot = Path(self.directory.name) / "current.json"
+        self.state.write_text(self.sale["id"] + "\n")
+        self.assertEqual(self.run_check(snapshot_path=snapshot), 0)
+        current = json.loads(snapshot.read_text(encoding='utf-8'))
+        self.assertIn(self.sale["id"], current["items"])
+        self.assertIn("Still available — refreshed after 60 days", current["items"][self.sale["id"]]["embed"]["description"])
+        self.assertEqual(self.run_check(now=datetime.fromisoformat(self.sale["end"]), snapshot_path=snapshot), 0)
+        ended = json.loads(snapshot.read_text(encoding='utf-8'))
+        self.assertNotIn(self.sale["id"], ended["items"])
+        self.assertTrue(ended["coverage"]["steam-schedule"])
+        self.post.assert_not_called()
+
+    def test_retention_dry_run_only_exports_ephemeral_snapshot(self):
+        journal = Path(self.directory.name) / "posts.json"
+        snapshot = Path(self.directory.name) / "current.json"
+        journal.write_text("keep exactly")
+        self.run_check(dry_run=True, journal_path=journal, snapshot_path=snapshot)
+        self.assertEqual(journal.read_text(encoding='utf-8'), "keep exactly")
+        self.assertTrue(snapshot.exists())
+        self.assertFalse(self.state.exists())
+        self.post.assert_not_called()
+
+    def test_webhook_wait_ack_is_required_and_only_safe_ids_returned(self):
+        class Response(io.BytesIO):
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                self.close()
+        with patch.object(watcher, "urlopen", return_value=Response(b'{"id":"123","channel_id":"456","token":"secret"}')) as opened:
+            self.assertEqual(watcher.send_discord("https://discord.example/hook?wait=false&thread_id=9", {}),
+                             {"message_id": "123", "channel_id": "456"})
+        self.assertIn("wait=true", opened.call_args.args[0].full_url)
+        self.assertIn("thread_id=9", opened.call_args.args[0].full_url)
+        for body in (b'{}', b'{"id":"invalid","channel_id":"456"}', b'[]', b'invalid JSON'):
+            with self.subTest(body=body), patch.object(watcher, "urlopen", return_value=Response(body)):
+                with self.assertRaises(RuntimeError):
+                    watcher.send_discord("https://discord.example/hook", {})
 
 
 if __name__ == "__main__":

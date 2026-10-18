@@ -164,7 +164,7 @@ test("Discord 429 honors retry_after, requests acknowledgment and prevents unver
       seen.push(url);
       return seen.length === 1
         ? new Response(JSON.stringify({ retry_after: 0.5 }), { status: 429 })
-        : new Response(JSON.stringify({ id: "acknowledged" }), { status: 200 });
+        : new Response(JSON.stringify({ id: "1561343633096052808", channel_id: "1557423972633808996" }), { status: 200 });
     },
   });
   assert.deepEqual(waits, [500]);
@@ -177,18 +177,72 @@ test("dry-run is offline with a fixture, needs no webhook and cannot modify save
   const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "minecraft-watcher-test-"));
   try {
     const modulePath = path.join(temporary, "watcher.mjs"), fixturePath = path.join(temporary, "fixture.json"), statePath = path.join(temporary, "state.json");
+    const journalPath = path.join(temporary, "journal.json"), snapshotPath = path.join(temporary, "snapshot.json");
     await fs.writeFile(modulePath, source);
     await fs.writeFile(fixturePath, JSON.stringify({ payload, metadata: { [ID]: official } }));
     const original = JSON.stringify(earlyState());
     await fs.writeFile(statePath, original);
-    const env = { ...process.env, DRY_RUN: "true", WATCHER_STATE_FILE: statePath };
+    const env = { ...process.env, DRY_RUN: "true", WATCHER_STATE_FILE: statePath, DISCORD_RETENTION_FILE: journalPath, DISCORD_RETENTION_SNAPSHOT: snapshotPath };
     delete env.DISCORD_WEBHOOK_URL;
     const output = execFileSync(process.execPath, [modulePath, "--fixture", fixturePath, "--at", new Date(NOW).toISOString()], { env, encoding: "utf8" });
     const result = JSON.parse(output);
     assert.equal(result.dryRun, true);
     assert.equal(result.messages[0].embeds[0].image.url, IMAGE);
     assert.equal(await fs.readFile(statePath, "utf8"), original);
+    await assert.rejects(fs.stat(journalPath), { code: "ENOENT" });
+    const snapshot = JSON.parse(await fs.readFile(snapshotPath, "utf8"));
+    assert.equal(snapshot.destination, "minecraft");
+    assert.equal(snapshot.items[ID].embed.image.url, IMAGE);
   } finally { await fs.rm(temporary, { recursive: true, force: true }); }
+});
+
+test("retention snapshot rechecks announced products, preserves price warnings and removes new-discovery claims", async () => {
+  const first = await plan();
+  const state = { ...blank(), schemaVersion: 2, notifiedItems: { [first.units[0].key]: START } };
+  let calls = 0;
+  const current = await plan(payload, state, { metadata: async () => { calls++; return official; } });
+  assert.equal(current.units.length, 0);
+  assert.equal(current.currentUnits.length, 1);
+  assert.equal(calls, 1);
+  const snapshot = watcher.retentionSnapshot(current, NOW);
+  assert.deepEqual(snapshot.coverage, { "minecraft:catalog": true });
+  assert.equal(snapshot.items[ID].scope, "minecraft:catalog");
+  assert.equal(snapshot.items[ID].expires_at, END);
+  assert.match(field(snapshot.items[ID].embed, "Price check"), /unverified/);
+  assert.equal(field(snapshot.items[ID].embed, "Bot history"), undefined);
+  assert.equal(Object.keys(watcher.retentionSnapshot(await plan(null), NOW).items).length, 0);
+  const malformed = await plan({ sales: [{ ...baseSale, endDate: "unknown" }] });
+  assert.equal(watcher.retentionSnapshot(malformed, NOW).coverage["minecraft:catalog"], false);
+});
+
+test("acknowledged Minecraft deliveries register durable cleanup IDs without changing historical deduplication", async () => {
+  const temporary = await fs.mkdtemp(path.join(os.tmpdir(), "minecraft-journal-test-"));
+  try {
+    const journalFile = path.join(temporary, "journal.json"), sourceState = blank(), current = await plan();
+    let saved;
+    await watcher.deliverNotifications(current, sourceState, {
+      webhook: "https://discord.example/webhook", journalFile, now: NOW,
+      post: async () => ({ id: "1561343633096052808", channel_id: "1557423972633808996" }),
+      save: async (value) => { saved = structuredClone(value); },
+    });
+    const journal = JSON.parse(await fs.readFile(journalFile, "utf8"));
+    const message = journal.messages["1561343633096052808"];
+    assert.equal(message.created_at, new Date(NOW).toISOString());
+    assert.equal(message.message_id, "1561343633096052808");
+    assert.deepEqual(message.items, [{ key: ID, scope: "minecraft:catalog" }]);
+    assert.deepEqual(message.replacement_ids, []);
+    assert.equal((await plan(payload, saved)).units.length, 0);
+    assert.deepEqual(sourceState, blank());
+    const before = await fs.readFile(journalFile, "utf8");
+    await assert.rejects(watcher.recordDiscordDelivery(journalFile, { id: "malformed" }, current.units, NOW), /valid message and channel/);
+    assert.equal(await fs.readFile(journalFile, "utf8"), before);
+  } finally { await fs.rm(temporary, { recursive: true, force: true }); }
+});
+
+test("a successful HTTP response without Discord IDs is not treated as acknowledged delivery", async () => {
+  await assert.rejects(watcher.postDiscord("https://discord.example/webhook", {}, {
+    fetchFn: async () => new Response(JSON.stringify({ id: "not-a-discord-id" }), { status: 200 }),
+  }), /valid message and channel/);
 });
 
 test("corrupt history fails instead of silently resending every promotion", async () => {

@@ -32,6 +32,51 @@ export async function saveState(state, file = STATE_FILE) {
   await fs.rename(temporary, file);
 }
 
+const SNOWFLAKE = /^\d{15,22}$/;
+const RETENTION_SCOPE = "minecraft:catalog";
+
+export function validateDiscordAcknowledgement(value) {
+  if (!value || !SNOWFLAKE.test(String(value.id ?? "")) || !SNOWFLAKE.test(String(value.channel_id ?? ""))) {
+    throw new Error("Discord delivery did not return valid message and channel IDs; delivery remains pending.");
+  }
+  return { id: String(value.id), channel_id: String(value.channel_id) };
+}
+
+export async function recordDiscordDelivery(file, acknowledgement, batch, now = Date.now()) {
+  if (!file) return;
+  const ack = validateDiscordAcknowledgement(acknowledgement);
+  let journal;
+  try { journal = JSON.parse(await fs.readFile(file, "utf8")); }
+  catch (error) { if (error.code !== "ENOENT") throw error; journal = { version: 1, messages: {} }; }
+  if (journal.version !== 1 || !journal.messages || Array.isArray(journal.messages) || typeof journal.messages !== "object") throw new Error("Invalid Discord delivery journal.");
+  journal.messages[ack.id] = {
+    message_id: ack.id, channel_id: ack.channel_id, created_at: new Date(now).toISOString(),
+    items: batch.map((unit) => ({ key: unit.item.id, scope: RETENTION_SCOPE })),
+    purpose: "alert", replacement_ids: [],
+  };
+  await saveState(journal, file);
+}
+
+export function retentionSnapshot(plan, now = Date.now()) {
+  const items = {};
+  for (const unit of plan.currentUnits ?? plan.units) {
+    if (items[unit.item.id]) continue; // Plans are sorted by the strongest currently reported promotion.
+    const embed = structuredClone(unit.embed);
+    embed.fields = embed.fields.filter((entry) => entry.name !== "Bot history");
+    items[unit.item.id] = { scope: RETENTION_SCOPE, embed, expires_at: new Date(unit.window.end).toISOString() };
+  }
+  return {
+    version: 1, destination: "minecraft", observed_at: new Date(now).toISOString(),
+    identity: {
+      username: "Bedrock Sale Watcher",
+      avatar_url: "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/minecraft-avatar.png",
+      content: "Current Minecraft Marketplace promotions. Check each item's price verification and dates.",
+    },
+    coverage: { [RETENTION_SCOPE]: !(plan.skipped ?? []).some((entry) =>
+      ["invalid or missing promotion dates", "item has no stable ID", "promotion has no identifiable items"].includes(entry.reason)) }, items,
+  };
+}
+
 async function request(url, options = {}, fetchFn = fetch) {
   const response = await fetchFn(url, { ...options, signal: options.signal || AbortSignal.timeout(20_000) });
   const text = await response.text();
@@ -216,7 +261,7 @@ export function buildEmbed(unit, state) {
 }
 
 export async function planNotifications(payload, state, { now = Date.now(), minDiscount = 1, metadata = fetchOfficialMetadata } = {}) {
-  const units = [], skipped = [], metadataCache = new Map();
+  const units = [], currentUnits = [], skipped = [], metadataCache = new Map();
   const legacy = state.legacySeenSales ?? (state.schemaVersion === 2 ? {} : state.seenSales ?? {});
   const notified = state.notifiedItems ?? {};
   for (const sale of getSalesArray(payload)) {
@@ -228,26 +273,27 @@ export async function planNotifications(payload, state, { now = Date.now(), minD
     const saleKey = saleIdentity(sale, discount);
     const legacyTime = Date.parse(legacy[saleKey] ?? "");
     // Old alerts sent before the documented start must not suppress the real start alert.
-    if (Number.isFinite(legacyTime) && legacyTime >= window.start && legacyTime < window.end) continue;
+    const legacyNotified = Number.isFinite(legacyTime) && legacyTime >= window.start && legacyTime < window.end;
     const saleUnits = [];
     for (const rawItem of getItems(sale)) {
       const basic = getItemInfo(rawItem);
       if (!basic.id) { skipped.push({ sale: sale.title ?? sale.id, reason: "item has no stable ID" }); continue; }
       const key = `${saleKey}|${window.start}|${basic.id}`;
-      if (notified[key]) continue;
       if (!metadataCache.has(basic.id)) {
         metadataCache.set(basic.id, Promise.resolve().then(() => metadata(basic.id)).catch(() => ({})));
       }
       const item = getItemInfo(rawItem, await metadataCache.get(basic.id));
       const unit = { key, saleKey, sale, item, discount, window };
       unit.embed = buildEmbed(unit, state);
-      saleUnits.push(unit);
+      currentUnits.push(unit);
+      if (!legacyNotified && !notified[key]) saleUnits.push(unit);
     }
     if (!getItems(sale).length) skipped.push({ sale: sale.title ?? sale.id, reason: "promotion has no identifiable items" });
     units.push(...saleUnits);
   }
   // Deduplicate repeated references before delivery and keep the highest reported promotions first.
-  return { units: [...new Map(units.map((unit) => [unit.key, unit])).values()].sort((a, b) => b.discount - a.discount), skipped };
+  const uniqueSorted = (values) => [...new Map(values.map((unit) => [unit.key, unit])).values()].sort((a, b) => b.discount - a.discount);
+  return { units: uniqueSorted(units), currentUnits: uniqueSorted(currentUnits), skipped };
 }
 
 function embedLength(embed) {
@@ -294,7 +340,7 @@ export async function postDiscord(webhook, payload, { fetchFn = fetch, wait = sl
       // No acknowledgement: leave this batch pending for the next run.
       throw new Error("Discord delivery was not acknowledged; this batch remains pending.");
     }
-    if (response.ok) return;
+    if (response.ok) return validateDiscordAcknowledgement(response.json);
     if (response.status === 429 && attempt < 4) {
       const seconds = numberOrNull(response.json?.retry_after) ?? numberOrNull(response.headers?.get?.("retry-after")) ?? 1;
       // A long rate limit is retried by the next scheduled run without dropping notifications.
@@ -307,7 +353,7 @@ export async function postDiscord(webhook, payload, { fetchFn = fetch, wait = sl
   }
 }
 
-export async function deliverNotifications(plan, originalState, { webhook, dryRun = false, save = saveState, post = postDiscord, now = Date.now() } = {}) {
+export async function deliverNotifications(plan, originalState, { webhook, dryRun = false, save = saveState, post = postDiscord, journalFile = process.env.DISCORD_RETENTION_FILE, now = Date.now() } = {}) {
   const batches = batchNotifications(plan.units);
   if (dryRun) return { dryRun: true, messages: batches.map(discordPayload), skipped: plan.skipped };
   if (!batches.length) return { sentItems: 0, messages: 0, skipped: plan.skipped };
@@ -317,7 +363,9 @@ export async function deliverNotifications(plan, originalState, { webhook, dryRu
   state.schemaVersion = 2;
   state.notifiedItems ??= {};
   for (const batch of batches) {
-    await post(webhook, discordPayload(batch));
+    const acknowledgement = await post(webhook, discordPayload(batch));
+    // The delivery journal is independent from sale/price history. Cleanup never erases deduplication.
+    await recordDiscordDelivery(journalFile, acknowledgement, batch, now);
     const timestamp = new Date(now).toISOString();
     for (const unit of batch) {
       state.notifiedItems[unit.key] = timestamp;
@@ -344,11 +392,19 @@ export async function main(args = process.argv.slice(2)) {
   if (!Number.isFinite(minDiscount) || minDiscount < 0 || minDiscount > 100) throw new Error("MIN_DISCOUNT must be between 0 and 100.");
   const fixtureData = fixture ? JSON.parse(await fs.readFile(fixture, "utf8")) : null;
   const payload = fixtureData ? fixtureData.payload ?? fixtureData : await getSales();
+  // A malformed successful response must not become an authoritative empty catalog for cleanup.
+  const supportedPayload = payload === null || Array.isArray(payload) || (payload && typeof payload === "object" && (
+    Array.isArray(payload.sales) || (payload.sales && typeof payload.sales === "object") || Array.isArray(payload.data) ||
+    Object.values(payload).some((value) => value && typeof value === "object" && ["discountPercent", "discountPercentage", "discount"].some((key) => key in value))
+  ));
+  if (!supportedPayload) throw new Error("Marketplace source returned an unrecognized sales payload; cleanup is disabled for this run.");
   const state = await readState();
   const options = { now, minDiscount };
   // An offline fixture never causes an HTTP request, including metadata enrichment.
   if (fixtureData) options.metadata = async (id) => fixtureData.metadata?.[id] ?? {};
   const plan = await planNotifications(payload, state, options);
+  // Snapshots are ephemeral source evidence, including during a manual dry-run preview.
+  if (process.env.DISCORD_RETENTION_SNAPSHOT) await saveState(retentionSnapshot(plan, now), process.env.DISCORD_RETENTION_SNAPSHOT);
   const result = await deliverNotifications(plan, state, { webhook: process.env.DISCORD_WEBHOOK_URL, dryRun, now });
   console.log(JSON.stringify(result, null, 2));
   return result;

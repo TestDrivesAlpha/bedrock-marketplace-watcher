@@ -1,0 +1,244 @@
+{
+  "messages": {
+    "1561336350006054997": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:13:14.068000Z",
+      "items": [
+        {
+          "key": "pokemon-sword|DE|EUR|digital|new",
+          "scope": "deku/pokemon-sword/DE"
+        },
+        {
+          "key": "pokemon-sword|DE|EUR|physical|new",
+          "scope": "deku/pokemon-sword/DE"
+        },
+        {
+          "key": "pokemon-sword|US|USD|digital|new",
+          "scope": "deku/pokemon-sword/US"
+        },
+        {
+          "key": "pokemon-sword|US|USD|physical|new",
+          "scope": "deku/pokemon-sword/US"
+        }
+      ],
+      "message_id": "1561336350006054997",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561336350756839549": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:13:14.247000Z",
+      "items": [
+        {
+          "key": "pokemon-sword|US|USD|physical|used",
+          "scope": "deku/pokemon-sword/US"
+        },
+        {
+          "key": "pokemon-violet-the-hidden-treasure-of-area-zero|DE|EUR|digital|new",
+          "scope": "deku/pokemon-violet-the-hidden-treasure-of-area-zero/DE"
+        },
+        {
+          "key": "pokemon-violet-the-hidden-treasure-of-area-zero|US|USD|digital|new",
+          "scope": "deku/pokemon-violet-the-hidden-treasure-of-area-zero/US"
+        },
+        {
+          "key": "pokemon-violet|DE|EUR|digital|new",
+          "scope": "deku/pokemon-violet/DE"
+        }
+      ],
+      "message_id": "1561336350756839549",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561336351985631327": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:13:14.540000Z",
+      "items": [
+        {
+          "key": "pokemon-violet|DE|EUR|physical|new",
+          "scope": "deku/pokemon-violet/DE"
+        },
+        {
+          "key": "pokemon-violet|US|USD|digital|new",
+          "scope": "deku/pokemon-violet/US"
+        },
+        {
+          "key": "pokemon-violet|US|USD|physical|new",
+          "scope": "deku/pokemon-violet/US"
+        },
+        {
+          "key": "pokemon-violet|US|USD|physical|used",
+          "scope": "deku/pokemon-violet/US"
+        }
+      ],
+      "message_id": "1561336351985631327",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561336352665116715": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:13:14.702000Z",
+      "items": [
+        {
+          "key": "pokmon-sword-expansion-pass|DE|EUR|digital|new",
+          "scope": "deku/pokmon-sword-expansion-pass/DE"
+        },
+        {
+          "key": "pokmon-sword-expansion-pass|US|USD|digital|new",
+          "scope": "deku/pokmon-sword-expansion-pass/US"
+        }
+      ],
+      "message_id": "1561336352665116715",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561337861809242175": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:19:14.510000Z",
+      "items": [
+        {
+          "key": "pokemon-sword|DE|EUR|digital|new",
+          "scope": "deku/pokemon-sword/DE"
+        },
+        {
+          "key": "pokemon-sword|DE|EUR|physical|new",
+          "scope": "deku/pokemon-sword/DE"
+        }
+      ],
+      "message_id": "1561337861809242175",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561337862828597284": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:19:14.753000Z",
+      "items": [
+        {
+          "key": "pokemon-sword|DE|EUR|physical|used",
+          "scope": "deku/pokemon-sword/DE"
+        },
+        {
+          "key": "pokemon-sword|US|USD|digital|new",
+          "scope": "deku/pokemon-sword/US"
+        },
+        {
+          "key": "pokemon-sword|US|USD|physical|new",
+          "scope": "deku/pokemon-sword/US"
+        },
+        {
+          "key": "pokemon-sword|US|USD|physical|used",
+          "scope": "deku/pokemon-sword/US"
+        }
+      ],
+      "message_id": "1561337862828597284",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561337864179023949": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:19:15.075000Z",
+      "items": [
+        {
+          "key": "pokemon-violet-the-hidden-treasure-of-area-zero|DE|EUR|digital|new",
+          "scope": "deku/pokemon-violet-the-hidden-treasure-of-area-zero/DE"
+        },
+        {
+          "key": "pokemon-violet-the-hidden-treasure-of-area-zero|US|USD|digital|new",
+          "scope": "deku/pokemon-violet-the-hidden-treasure-of-area-zero/US"
+        },
+        {
+          "key": "pokemon-violet|DE|EUR|digital|new",
+          "scope": "deku/pokemon-violet/DE"
+        },
+        {
+          "key": "pokemon-violet|DE|EUR|physical|new",
+          "scope": "deku/pokemon-violet/DE"
+        }
+      ],
+      "message_id": "1561337864179023949",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561337867068907569": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:19:15.764000Z",
+      "items": [
+        {
+          "key": "pokemon-violet|DE|EUR|physical|used",
+          "scope": "deku/pokemon-violet/DE"
+        },
+        {
+          "key": "pokemon-violet|US|USD|digital|new",
+          "scope": "deku/pokemon-violet/US"
+        },
+        {
+          "key": "pokemon-violet|US|USD|physical|new",
+          "scope": "deku/pokemon-violet/US"
+        },
+        {
+          "key": "pokemon-violet|US|USD|physical|used",
+          "scope": "deku/pokemon-violet/US"
+        }
+      ],
+      "message_id": "1561337867068907569",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561337868876517448": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:19:16.195000Z",
+      "items": [
+        {
+          "key": "pokmon-sword-expansion-pass|DE|EUR|digital|new",
+          "scope": "deku/pokmon-sword-expansion-pass/DE"
+        },
+        {
+          "key": "pokmon-sword-expansion-pass|US|USD|digital|new",
+          "scope": "deku/pokmon-sword-expansion-pass/US"
+        }
+      ],
+      "message_id": "1561337868876517448",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561343786439938134": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T11:42:47.052000Z",
+      "items": [
+        {
+          "key": "pokemon-sword|DE|EUR|physical|used",
+          "scope": "deku/pokemon-sword/DE"
+        },
+        {
+          "key": "pokemon-sword|US|USD|physical|used",
+          "scope": "deku/pokemon-sword/US"
+        },
+        {
+          "key": "pokemon-violet|DE|EUR|physical|used",
+          "scope": "deku/pokemon-violet/DE"
+        }
+      ],
+      "message_id": "1561343786439938134",
+      "purpose": "alert",
+      "replacement_ids": []
+    },
+    "1561410388187422855": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-18T16:07:26.146000Z",
+      "items": [
+        {
+          "key": "pokemon-sword|US|USD|physical|used",
+          "scope": "deku/pokemon-sword/US"
+        },
+        {
+          "key": "pokemon-violet|DE|EUR|physical|used",
+          "scope": "deku/pokemon-violet/DE"
+        }
+      ],
+      "message_id": "1561410388187422855",
+      "purpose": "alert",
+      "replacement_ids": []
+    }
+  },
+  "version": 1
+}

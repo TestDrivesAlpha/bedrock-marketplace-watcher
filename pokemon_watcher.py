@@ -19,6 +19,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+from discord_retention import record_message, write_snapshot
+
 ITEMS = {
     "pokemon-violet": {"title": "Pokémon Violet", "kind": "base game",
         "cover": "https://cdn.dekudeals.com/images/e14d18139c82fb9849155b66dc06c66d2b59c310/w540.jpg"},
@@ -359,6 +361,46 @@ def offer_key(offer):
     return "|".join(offer[key] for key in ("item_id", "region", "currency", "format", "condition"))
 
 
+def retention_scope(offer):
+    if offer["region"] in ("DE", "US"):
+        return f"deku/{offer['item_id']}/{offer['region']}"
+    if offer["region"] == "JP import":
+        return f"playasia/{offer['item_id']}/JP import"
+    return "pse/pokemon-violet/ID"
+
+
+def retention_item(offer):
+    return {"key": offer_key(offer), "scope": retention_scope(offer)}
+
+
+def export_retention_snapshot(offers, errors, countries, now, path, account_country="", coverage=""):
+    if not path:
+        return
+    # Scope each mandatory game/country independently. An optional import or
+    # Indonesia source failing must not freeze healthy German/US comparisons.
+    scopes = {f"deku/{item}/{country}": True for item in ITEMS for country in countries}
+    scopes.update({f"playasia/{item}/JP import": True for item in PLAYASIA})
+    scopes["pse/pokemon-violet/ID"] = True
+    for error in errors:
+        scopes[error.split(": ", 1)[0]] = False
+    items = {}
+    for offer in offers:
+        scope = retention_scope(offer)
+        if offer["stock"] == "unknown":
+            # A parsed price with no stock status cannot confirm retirement or
+            # continued availability of a previous message from this source.
+            scopes[scope] = False
+        if offer["stock"] in ("unknown", "unavailable"):
+            continue
+        event = {"offer": offer, "reason": "Current price — refreshed after 60 days",
+                 "previous_price": None, "observed_at": now.isoformat(timespec="seconds")}
+        items[offer_key(offer)] = {"scope": scope, "embed": event_embed(event, account_country, coverage)}
+    write_snapshot(path, {"version": 1, "destination": "pokemon", "observed_at": now.isoformat(),
+        "identity": {"username": "Pokémon Price Watcher", "avatar_url": AVATAR_URL,
+                     "content": "Pokémon current prices — refreshed after 60 days"},
+        "coverage": scopes, "items": items})
+
+
 def save_state(path, state):
     path = Path(path)
     temp = path.with_name(path.name + ".tmp")
@@ -489,7 +531,8 @@ def send_discord(webhook, payload):
         raise RuntimeError("Discord webhook failed or returned an invalid acknowledgement.") from None
 
 
-def announce_overview(offers, *, dry_run=False, webhook=None, account_country="", coverage="", post=send_discord, now=None):
+def announce_overview(offers, *, dry_run=False, webhook=None, account_country="", coverage="", post=send_discord, now=None,
+                      journal_path=None):
     """Send a requested current snapshot without reading or changing alert history."""
     observed_at = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
     events = [{"id": str(index), "offer": offer,
@@ -504,10 +547,15 @@ def announce_overview(offers, *, dry_run=False, webhook=None, account_country=""
     if batches and not webhook:
         raise RuntimeError("DISCORD_STEAM_WEBHOOK_URL secret is missing.")
     acknowledgements = []
-    for _, payload in batches:
+    journal_path = journal_path or os.environ.get("DISCORD_RETENTION_FILE")
+    by_id = {event["id"]: event for event in events}
+    for event_ids, payload in batches:
         ack = post(webhook, payload)
         if not isinstance(ack, dict) or not all(str(ack.get(k, "")).isdigit() for k in ("message_id", "channel_id")):
             raise RuntimeError("Discord overview acknowledgement was invalid.")
+        if journal_path:
+            record_message(journal_path, ack, [retention_item(by_id[event_id]["offer"]) for event_id in event_ids],
+                           now=observed_at, purpose="overview")
         acknowledgements.append(ack)
         print(json.dumps(ack))
     if not batches:
@@ -516,10 +564,10 @@ def announce_overview(offers, *, dry_run=False, webhook=None, account_country=""
 
 
 def run(offers, state_path, *, dry_run=False, webhook=None, account_country="", coverage="", post=send_discord, now=None,
-        announce_current=False):
+        announce_current=False, journal_path=None):
     if announce_current:
         return announce_overview(offers, dry_run=dry_run, webhook=webhook, account_country=account_country,
-                                 coverage=coverage, post=post, now=now)
+                                 coverage=coverage, post=post, now=now, journal_path=journal_path)
     state_path = Path(state_path)
     state = json.loads(state_path.read_text(encoding="utf-8")) if state_path.exists() else {}
     observed_at = (now or datetime.now(timezone.utc)).isoformat(timespec="seconds")
@@ -539,11 +587,15 @@ def run(offers, state_path, *, dry_run=False, webhook=None, account_country="", 
     # removed individually so failures cannot lose the unsent remainder.
     save_state(state_path, state)
     acknowledgements = []
+    journal_path = journal_path or os.environ.get("DISCORD_RETENTION_FILE")
     for event_ids, payload in batches:
         ack = post(webhook, payload)
         if not isinstance(ack, dict) or not all(str(ack.get(k, "")).isdigit() for k in ("message_id", "channel_id")):
             raise RuntimeError("Discord message acknowledgement was invalid.")
         sent = set(event_ids)
+        if journal_path:
+            record_message(journal_path, ack, [retention_item(event["offer"]) for event in state["pending"]
+                                            if event["id"] in sent], now=observed_at)
         state["pending"] = [event for event in state["pending"] if event["id"] not in sent]
         save_state(state_path, state)
         acknowledgements.append(ack)
@@ -577,6 +629,9 @@ def main():
     offers, errors = gather_offers(countries)
     required, optional = source_health(errors)
     coverage = coverage_text(countries, errors)
+    now = datetime.now(timezone.utc)
+    export_retention_snapshot(offers, errors, countries, now, os.environ.get("DISCORD_RETENTION_SNAPSHOT"),
+                              account_country, coverage)
     for error in errors:
         print(("Required source unavailable: " if error in required else "Optional source unavailable (excluded): ") + error)
     print(f"Current listings: {len(offers)}; unavailable sources: {len(errors)}.")
@@ -593,7 +648,7 @@ def main():
     run(offers, Path(os.environ.get("POKEMON_STATE_FILE", ".pokemon-price-state.json")),
         dry_run=os.environ.get("DRY_RUN", "false").lower().strip() in ("true", "1", "yes"),
         webhook=os.environ.get("DISCORD_WEBHOOK_URL"), account_country=account_country, coverage=coverage,
-        announce_current=os.environ.get("ANNOUNCE_CURRENT", "false").lower().strip() in ("true", "1", "yes"))
+        announce_current=os.environ.get("ANNOUNCE_CURRENT", "false").lower().strip() in ("true", "1", "yes"), now=now)
     if required:
         # Valid messages/state above are retained. The workflow's always-run
         # state-save step can commit checkpoints while exposing required gaps.

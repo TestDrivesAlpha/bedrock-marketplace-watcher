@@ -15,6 +15,8 @@ from urllib.error import HTTPError, URLError
 from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
+from discord_retention import record_message, write_snapshot
+
 UA = "EnebaDealsWatcher/1.0 (+https://github.com/TestDrivesAlpha/bedrock-marketplace-watcher)"
 BASE = "https://www.eneba.com"
 STATE_FILE = ".eneba-price-state.json"
@@ -245,18 +247,26 @@ def eligible(offer, country):
 def collect(country="ID", alternative="DE", currency="EUR", fetcher=fetch_html, now=None):
     if country != "ID" or alternative != "DE" or currency != "EUR":
         raise SourceError("this watcher currently supports Indonesia (ID), Germany alternatives (DE), and EUR only")
-    result = {"campaigns": [], "offers": [], "errors": []}
+    result = {"campaigns": [], "offers": [], "errors": [], "retention_coverage": {}}
     try:
-        result["campaigns"] = campaigns_from_html(fetcher(BASE + "/en-id/?currency=EUR"), country, now)
+        html = fetcher(BASE + "/en-id/?currency=EUR")
+        result["campaigns"] = campaigns_from_html(html, country, now)
+        storefront = source_country(apollo_state(html), "Slider_sliders")
+        result["retention_coverage"]["eneba-campaigns:" + storefront] = True
     except SourceError as error:
         result["errors"].append({"source": "Eneba homepage campaigns", "error": str(error)})
     candidates = {}
+    storefronts = set()
+    search_complete = False
     try:
         for page in range(1, 6):
             url = BASE + "/en-id/store/minecraft-minecoins?currency=EUR" + (f"&page={page}" if page > 1 else "")
-            offers, total, count = offers_from_html(fetcher(url), country, currency)
+            html = fetcher(url)
+            offers, total, count = offers_from_html(html, country, currency)
+            storefronts.add(source_country(apollo_state(html), "search"))
             candidates.update((offer["slug"], offer) for offer in offers)
             if page * 20 >= total:
+                search_complete = True
                 break
             if count == 0 or page == 5:
                 raise SourceError("Minecoin search pagination could not be completed")
@@ -268,6 +278,12 @@ def collect(country="ID", alternative="DE", currency="EUR", fetcher=fetch_html, 
             result["offers"].append(enrich_offer(offer, fetcher(offer["url"]), country))
         except SourceError as error:
             result["errors"].append({"source": offer["slug"], "error": str(error)})
+    # A missing SKU is conclusively inactive only after the entire comparable
+    # storefront search and every activation check succeeded. Otherwise retry.
+    complete = search_complete and len(storefronts) == 1 and not any(
+        error["source"] != "Eneba homepage campaigns" for error in result["errors"])
+    for storefront in storefronts:
+        result["retention_coverage"][f"eneba-minecoins:{storefront}:{currency}"] = complete
     return result
 
 
@@ -420,9 +436,10 @@ def post_discord(webhook, message, opener=urlopen, sleeper=time.sleep):
         try:
             with opener(request, timeout=30) as response:
                 acknowledgment = json.load(response)
-            if not acknowledgment.get("id") or not acknowledgment.get("channel_id"):
+            if not isinstance(acknowledgment, dict) or not all(
+                    str(acknowledgment.get(key, "")).isdigit() for key in ("id", "channel_id")):
                 raise SourceError("Discord did not return a message acknowledgment; batch remains pending")
-            return {"message_id": acknowledgment["id"], "channel_id": acknowledgment["channel_id"]}
+            return {"message_id": str(acknowledgment["id"]), "channel_id": str(acknowledgment["channel_id"])}
         except HTTPError as error:
             if error.code == 429 and attempt < 4:
                 try:
@@ -444,7 +461,54 @@ def post_discord(webhook, message, opener=urlopen, sleeper=time.sleep):
             raise SourceError("Discord delivery was not acknowledged; batch remains pending") from None
 
 
-def run(snapshot, state, dry_run=False, webhook=None, save=None, post=post_discord, now=None, min_drop_percent=1):
+def retention_item(event):
+    if "offer" in event:
+        offer = event["offer"]
+        return {"key": "offer:" + price_key(offer),
+                "scope": f"eneba-minecoins:{offer['source_country']}:{offer['currency']}"}
+    if "campaign" in event:
+        campaign = event["campaign"]
+        return {"key": "campaign:" + campaign["key"],
+                "scope": "eneba-campaigns:" + campaign["source_country"]}
+    return {"key": "health:" + event.get("failure", {}).get("source", "empty-overview"), "scope": "eneba-health"}
+
+
+def export_retention_snapshot(snapshot, now, path):
+    if not path:
+        return
+    coverage = dict(snapshot.get("retention_coverage", {}))
+    coverage["eneba-health"] = True
+    # Offline/legacy fixtures have no explicit successful collection metadata;
+    # they can still refresh present items, but cannot prove missing ones ended.
+    events = [{"campaign": campaign, "embed": campaign_embed(campaign)} for campaign in snapshot["campaigns"]]
+    events += [{"offer": offer, "embed": offer_embed(offer, overview=True)}
+               for offer in selected_offers(snapshot["offers"])]
+    for error in snapshot["errors"]:
+        events.append({"failure": error, "embed": {"title": "Eneba source check failed",
+            "description": f"{error['source']}: {error['error']}", "color": 0xBF4545}})
+    items = {}
+    for event in events:
+        reference = retention_item(event)
+        embed = event["embed"]
+        if "offer" in event:
+            embed["description"] = embed["description"].replace(
+                "Current overview — requested refresh", "Current price — refreshed after 60 days")
+        else:
+            label = "Source status — refreshed after 60 days" if "failure" in event else "Still available — refreshed after 60 days"
+            embed["description"] = f"**{label}**\n" + embed["description"]
+        item = {"scope": reference["scope"], "embed": embed}
+        end = event.get("campaign", {}).get("terms", {}).get("end") if event.get("campaign", {}).get("terms") else None
+        if end:
+            item["ends_at"] = end
+        items[reference["key"]] = item
+    write_snapshot(path, {"version": 1, "destination": "eneba", "observed_at": stamp(now),
+        "identity": {"username": "Eneba Sale Watcher", "avatar_url": AVATAR_URL,
+                     "content": "Eneba current offers — refreshed after 60 days"},
+        "coverage": coverage, "items": items})
+
+
+def run(snapshot, state, dry_run=False, webhook=None, save=None, post=post_discord, now=None, min_drop_percent=1,
+        journal_path=None):
     now = now or utc_now()
     events = plan_events(snapshot, state, min_drop_percent)
     grouped = list(batches(events))
@@ -454,9 +518,13 @@ def run(snapshot, state, dry_run=False, webhook=None, save=None, post=post_disco
     if grouped and not webhook:
         raise SourceError("DISCORD_WEBHOOK_URL is missing; use --dry-run to preview")
     updated = copy.deepcopy(state)
+    journal_path = journal_path or os.getenv("DISCORD_RETENTION_FILE")
     acknowledgments = []
     for batch in grouped:
-        acknowledgments.append(post(webhook, payload(batch)))
+        acknowledgment = post(webhook, payload(batch))
+        if journal_path:
+            record_message(journal_path, acknowledgment, [retention_item(event) for event in batch], now=now)
+        acknowledgments.append(acknowledgment)
         for event in batch:
             updated["notified"][event["key"]] = stamp(now)
             if "campaign" in event:
@@ -478,12 +546,13 @@ def run(snapshot, state, dry_run=False, webhook=None, save=None, post=post_disco
     return {"sent_events": len(events), "offers_checked": len(snapshot["offers"]), "acknowledgments": acknowledgments, "source_errors": snapshot["errors"]}
 
 
-def run_overview(snapshot, dry_run=False, webhook=None, post=post_discord, checkpoint=None):
+def run_overview(snapshot, dry_run=False, webhook=None, post=post_discord, checkpoint=None, now=None,
+                 journal_path=None):
     """One explicitly requested refresh; never read, save, or acknowledge regular sale history."""
-    events = [{"embed": campaign_embed(campaign, overview=True)} for campaign in snapshot["campaigns"]]
-    events.extend({"embed": offer_embed(offer, overview=True)} for offer in selected_offers(snapshot["offers"]))
+    events = [{"campaign": campaign, "embed": campaign_embed(campaign, overview=True)} for campaign in snapshot["campaigns"]]
+    events.extend({"offer": offer, "embed": offer_embed(offer, overview=True)} for offer in selected_offers(snapshot["offers"]))
     for error in snapshot["errors"]:
-        events.append({"embed": {
+        events.append({"failure": error, "embed": {
             "title": "Current overview — source unavailable", "color": 0xBF4545,
             "description": f"{error['source']}: {error['error']}",
             "fields": [{"name": "Current data unavailable", "value": "This refresh cannot confirm offers from the failed source. Historical prices were not reused as current offers, and regular notification history was not changed."}],
@@ -499,8 +568,12 @@ def run_overview(snapshot, dry_run=False, webhook=None, post=post_discord, check
     if not webhook:
         raise SourceError("DISCORD_WEBHOOK_URL is missing; use --dry-run to preview")
     acknowledgments = []
+    journal_path = journal_path or os.getenv("DISCORD_RETENTION_FILE")
     for batch in grouped:
         acknowledgment = post(webhook, payload(batch, overview=True))
+        if journal_path:
+            record_message(journal_path, acknowledgment, [retention_item(event) for event in batch],
+                           now=now or utc_now(), purpose="overview")
         # A refresh acknowledgment belongs only to this manual request, never a normal sale event.
         safe_ack = {"message_id": acknowledgment["message_id"], "channel_id": acknowledgment["channel_id"]}
         acknowledgments.append(safe_ack)
@@ -520,10 +593,11 @@ def main(argv=None):
     now = utc_now()
     snapshot = json.loads(Path(args.fixture).read_text(encoding="utf-8")) if args.fixture else collect(
         os.getenv("ENEBA_COUNTRY", "ID"), os.getenv("ENEBA_ALT_COUNTRY", "DE"), os.getenv("ENEBA_CURRENCY", "EUR"), now=now)
+    export_retention_snapshot(snapshot, now, os.getenv("DISCORD_RETENTION_SNAPSHOT"))
     announce_current = os.getenv("ANNOUNCE_CURRENT", "false").lower() in {"1", "true"}
     if announce_current:
         result = run_overview(snapshot, dry_run=dry_run, webhook=os.getenv("DISCORD_WEBHOOK_URL"),
-                              checkpoint=lambda ack: print(json.dumps({"overview_acknowledgment": ack})))
+                              checkpoint=lambda ack: print(json.dumps({"overview_acknowledgment": ack})), now=now)
     else:
         file = os.getenv("ENEBA_STATE_FILE", STATE_FILE)
         minimum = float(os.getenv("ENEBA_MIN_DROP_PERCENT", "1"))
