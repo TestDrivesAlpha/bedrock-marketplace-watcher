@@ -274,6 +274,8 @@ export function discordPayload(batch) {
     discount >= 75 && item.normalPrice > 0 && item.storePrice !== null &&
     item.storePrice < item.normalPrice && (1 - item.storePrice / item.normalPrice) * 100 >= 75);
   return {
+    username: "Bedrock Sale Watcher",
+    avatar_url: "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/minecraft-avatar.png",
     content: `${verifiedMajorDiscount ? "@everyone " : ""}Minecraft Marketplace promotion detected. Highest reported discount: **${highest}% off**. See each item's price check below.`,
     embeds: batch.map((unit) => unit.embed),
     // Preserve major-sale alerts only when both source percentage and comparable prices qualify.
