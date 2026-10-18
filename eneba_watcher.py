@@ -18,6 +18,7 @@ from urllib.request import Request, urlopen
 UA = "EnebaDealsWatcher/1.0 (+https://github.com/TestDrivesAlpha/bedrock-marketplace-watcher)"
 BASE = "https://www.eneba.com"
 STATE_FILE = ".eneba-price-state.json"
+AVATAR_URL = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/eneba-avatar.png"
 FEST_TERMS = {
     "captured": "2026-10-17", "code": "FEST", "percent": 13,
     "end": "2026-10-18T23:59:00+02:00",
@@ -274,9 +275,11 @@ def money(minor):
     return f"EUR {Decimal(minor) / 100:.2f}"
 
 
-def campaign_embed(campaign):
+def campaign_embed(campaign, overview=False):
     terms = campaign.get("terms")
     description = f"Featured broad sale on Eneba's public homepage, with **{campaign['source_country']} storefront context**. This is a regional reference; campaign eligibility for Indonesia is unverified. Product eligibility and the checkout price depend on the offer."
+    if overview:
+        description = "**Current overview — requested refresh**\n" + description
     fields = [{"name": "Source", "value": f"[Open campaign and current terms]({campaign['url']})"}]
     if terms:
         fields.extend([
@@ -292,10 +295,12 @@ def campaign_embed(campaign):
     return embed
 
 
-def offer_embed(offer, previous=None, country="ID", alternative="DE"):
+def offer_embed(offer, previous=None, country="ID", alternative="DE", overview=False):
     primary = eligible(offer, country)
     heading = "Indonesia activation listed" if primary else "Germany alternative only — Indonesia not supported"
-    if previous and offer["price_minor"] < previous["price_minor"]:
+    if overview:
+        event = f"**Current overview — requested refresh**\nCurrent available listing: **{money(offer['price_minor'])}**. This refresh does not claim a new sale or a price drop."
+    elif previous and offer["price_minor"] < previous["price_minor"]:
         drop = (Decimal(previous["price_minor"] - offer["price_minor"]) / previous["price_minor"] * 100)
         event = f"Observed listing-price drop: **{drop:.1f}%**, {money(previous['price_minor'])} → **{money(offer['price_minor'])}**."
     else:
@@ -344,20 +349,24 @@ def price_key(offer):
     return "|".join((offer["slug"], offer["currency"], offer["source_country"]))
 
 
-def plan_events(snapshot, state, min_drop_percent=1, country="ID", alternative="DE"):
-    events = []
-    for campaign in snapshot["campaigns"]:
-        if campaign["key"] not in state["campaigns"]:
-            events.append({"key": "campaign:" + campaign["key"], "campaign": campaign, "embed": campaign_embed(campaign)})
+def selected_offers(offers, country="ID", alternative="DE"):
     # Keep regions separate and compare available listings with equal Minecoin quantities.
     groups = {}
-    for offer in snapshot["offers"]:
+    for offer in offers:
         scope = "ID" if eligible(offer, country) else "DE" if eligible(offer, alternative) else None
         if scope:
             key = (scope, offer["coins"])
             if key not in groups or offer["price_minor"] < groups[key]["price_minor"]:
                 groups[key] = offer
-    for group, offer in sorted(groups.items(), key=lambda item: (0 if item[0][0] == "ID" else 1, item[0][1])):
+    return [offer for _, offer in sorted(groups.items(), key=lambda item: (0 if item[0][0] == "ID" else 1, item[0][1]))]
+
+
+def plan_events(snapshot, state, min_drop_percent=1, country="ID", alternative="DE"):
+    events = []
+    for campaign in snapshot["campaigns"]:
+        if campaign["key"] not in state["campaigns"]:
+            events.append({"key": "campaign:" + campaign["key"], "campaign": campaign, "embed": campaign_embed(campaign)})
+    for offer in selected_offers(snapshot["offers"], country, alternative):
         previous = state["prices"].get(price_key(offer))
         baseline = "baseline:" + offer["slug"] + ":" + offer["source_country"]
         if baseline not in state["notified"]:
@@ -395,8 +404,9 @@ def batches(events):
         yield batch
 
 
-def payload(batch):
-    return {"username": "Eneba Sale Watcher", "content": "Eneba campaign / Minecoin code update. Activation region and checkout fees are shown separately.",
+def payload(batch, overview=False):
+    content = "Current overview — requested refresh. Current campaign and Minecoin listings; activation regions and checkout fees remain separate." if overview else "Eneba campaign / Minecoin code update. Activation region and checkout fees are shown separately."
+    return {"username": "Eneba Sale Watcher", "avatar_url": AVATAR_URL, "content": content,
             "embeds": [event["embed"] for event in batch], "allowed_mentions": {"parse": []}}
 
 
@@ -468,6 +478,37 @@ def run(snapshot, state, dry_run=False, webhook=None, save=None, post=post_disco
     return {"sent_events": len(events), "offers_checked": len(snapshot["offers"]), "acknowledgments": acknowledgments, "source_errors": snapshot["errors"]}
 
 
+def run_overview(snapshot, dry_run=False, webhook=None, post=post_discord, checkpoint=None):
+    """One explicitly requested refresh; never read, save, or acknowledge regular sale history."""
+    events = [{"embed": campaign_embed(campaign, overview=True)} for campaign in snapshot["campaigns"]]
+    events.extend({"embed": offer_embed(offer, overview=True)} for offer in selected_offers(snapshot["offers"]))
+    for error in snapshot["errors"]:
+        events.append({"embed": {
+            "title": "Current overview — source unavailable", "color": 0xBF4545,
+            "description": f"{error['source']}: {error['error']}",
+            "fields": [{"name": "Current data unavailable", "value": "This refresh cannot confirm offers from the failed source. Historical prices were not reused as current offers, and regular notification history was not changed."}],
+        }})
+    if not events:
+        events.append({"embed": {"title": "Current overview — requested refresh", "description": "The successful public source checks returned no matching available Minecoin listings or featured broad campaigns. Regular notification history was not changed.", "color": 0x7139CB}})
+    grouped = list(batches(events))
+    result = {"announce_current": True, "offers_checked": len(snapshot["offers"]),
+              "indonesia_eligible_offers": sum(eligible(offer, "ID") for offer in snapshot["offers"]),
+              "source_errors": snapshot["errors"]}
+    if dry_run:
+        return dict(result, dry_run=True, messages=[payload(batch, overview=True) for batch in grouped])
+    if not webhook:
+        raise SourceError("DISCORD_WEBHOOK_URL is missing; use --dry-run to preview")
+    acknowledgments = []
+    for batch in grouped:
+        acknowledgment = post(webhook, payload(batch, overview=True))
+        # A refresh acknowledgment belongs only to this manual request, never a normal sale event.
+        safe_ack = {"message_id": acknowledgment["message_id"], "channel_id": acknowledgment["channel_id"]}
+        acknowledgments.append(safe_ack)
+        if checkpoint:
+            checkpoint(safe_ack)
+    return dict(result, sent_overview_cards=len(events), acknowledgments=acknowledgments)
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--dry-run", action="store_true")
@@ -479,11 +520,16 @@ def main(argv=None):
     now = utc_now()
     snapshot = json.loads(Path(args.fixture).read_text(encoding="utf-8")) if args.fixture else collect(
         os.getenv("ENEBA_COUNTRY", "ID"), os.getenv("ENEBA_ALT_COUNTRY", "DE"), os.getenv("ENEBA_CURRENCY", "EUR"), now=now)
-    file = os.getenv("ENEBA_STATE_FILE", STATE_FILE)
-    minimum = float(os.getenv("ENEBA_MIN_DROP_PERCENT", "1"))
-    if not 0 <= minimum <= 100:
-        raise SourceError("ENEBA_MIN_DROP_PERCENT must be between 0 and 100")
-    result = run(snapshot, read_state(file), dry_run=dry_run, webhook=os.getenv("DISCORD_WEBHOOK_URL"), save=lambda state: save_state(state, file), now=now, min_drop_percent=minimum)
+    announce_current = os.getenv("ANNOUNCE_CURRENT", "false").lower() in {"1", "true"}
+    if announce_current:
+        result = run_overview(snapshot, dry_run=dry_run, webhook=os.getenv("DISCORD_WEBHOOK_URL"),
+                              checkpoint=lambda ack: print(json.dumps({"overview_acknowledgment": ack})))
+    else:
+        file = os.getenv("ENEBA_STATE_FILE", STATE_FILE)
+        minimum = float(os.getenv("ENEBA_MIN_DROP_PERCENT", "1"))
+        if not 0 <= minimum <= 100:
+            raise SourceError("ENEBA_MIN_DROP_PERCENT must be between 0 and 100")
+        result = run(snapshot, read_state(file), dry_run=dry_run, webhook=os.getenv("DISCORD_WEBHOOK_URL"), save=lambda state: save_state(state, file), now=now, min_drop_percent=minimum)
     print(json.dumps(result, indent=2))
     return 1 if snapshot["errors"] else 0
 
