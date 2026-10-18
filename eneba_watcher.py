@@ -1,0 +1,475 @@
+"""Public Eneba campaign and Minecoin-code price watcher (Python standard library)."""
+import argparse
+import copy
+import hashlib
+import json
+import os
+import re
+import sys
+import time
+from datetime import datetime, timezone
+from decimal import Decimal
+from html.parser import HTMLParser
+from pathlib import Path
+from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qsl, urlencode, urljoin, urlsplit, urlunsplit
+from urllib.request import Request, urlopen
+
+UA = "EnebaDealsWatcher/1.0 (+https://github.com/TestDrivesAlpha/bedrock-marketplace-watcher)"
+BASE = "https://www.eneba.com"
+STATE_FILE = ".eneba-price-state.json"
+FEST_TERMS = {
+    "captured": "2026-10-17", "code": "FEST", "percent": 13,
+    "end": "2026-10-18T23:59:00+02:00",
+    "text": "Valid until 2026-10-18 23:59 EET. Once per user, for one game under EUR 80. Cannot combine with other promotions, discount codes or cashback. Cannot pay with Eneba Wallet. Sale duration may change without notice.",
+}
+
+
+class SourceError(RuntimeError):
+    pass
+
+
+def utc_now():
+    return datetime.now(timezone.utc)
+
+
+def stamp(value):
+    return value.astimezone(timezone.utc).isoformat()
+
+
+def safe_url(value, host=None):
+    if not isinstance(value, str):
+        return None
+    parsed = urlsplit(value)
+    if parsed.scheme != "https" or not parsed.netloc or (host and parsed.hostname != host):
+        return None
+    return value
+
+
+def canonical(url):
+    parsed = urlsplit(urljoin(BASE, url))
+    return urlunsplit(("https", "www.eneba.com", parsed.path.rstrip("/"), "", ""))
+
+
+def digest(value):
+    return hashlib.sha256(value.encode()).hexdigest()[:24]
+
+
+def fetch_html(url):
+    request = Request(url, headers={"User-Agent": UA, "Accept": "text/html", "Accept-Language": "en-US,en;q=0.9"})
+    try:
+        with urlopen(request, timeout=30) as response:
+            body = response.read(5_000_001)
+            if len(body) > 5_000_000:
+                raise SourceError("public page exceeded the expected size")
+            return body.decode(response.headers.get_content_charset() or "utf-8")
+    except HTTPError as error:
+        # Do not evade protection or treat denied access as an empty shop.
+        raise SourceError(f"public page HTTP {error.code}; no offers inferred") from None
+    except (URLError, TimeoutError) as error:
+        raise SourceError(f"public page unavailable ({type(error).__name__}); no offers inferred") from None
+
+
+class ApolloParser(HTMLParser):
+    def __init__(self):
+        super().__init__(convert_charrefs=False)
+        self.collecting = False
+        self.parts = []
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "script" and dict(attrs).get("id") == "__APOLLO_STATE__":
+            self.collecting = True
+
+    def handle_endtag(self, tag):
+        if tag == "script":
+            self.collecting = False
+
+    def handle_data(self, data):
+        if self.collecting:
+            self.parts.append(data)
+
+
+def apollo_state(html, country="ID"):
+    parser = ApolloParser()
+    parser.feed(html)
+    try:
+        state = json.loads("".join(parser.parts))
+    except (ValueError, TypeError):
+        raise SourceError("public page has no readable Apollo data (blocked page or changed layout)") from None
+    root = state.get("ROOT_QUERY") if isinstance(state, dict) else None
+    if not isinstance(root, dict):
+        raise SourceError("public Apollo data has no ROOT_QUERY")
+    contexts = []
+    for key in root:
+        if "(" in key:
+            try:
+                args = json.loads(key[key.index("(") + 1:-1])
+                if isinstance(args.get("context"), dict) and args["context"].get("country"):
+                    contexts.append(args["context"]["country"])
+            except (ValueError, TypeError):
+                continue
+    if country not in contexts:
+        raise SourceError(f"public page country context is not confirmed as {country}")
+    return state
+
+
+def field(obj, name):
+    if not isinstance(obj, dict):
+        return None
+    return next((value for key, value in obj.items() if key == name or key.startswith(name + "(")), None)
+
+
+def resolve(state, value):
+    return state.get(value["__ref"], {}) if isinstance(value, dict) and "__ref" in value else (value or {})
+
+
+def cover(product):
+    image = field(product, "cover") or {}
+    return safe_url(image.get("src2x")) or safe_url(image.get("src"))
+
+
+def campaigns_from_html(html, country="ID", now=None):
+    state = apollo_state(html, country)
+    slider = field(state["ROOT_QUERY"], "Slider_sliders")
+    if not isinstance(slider, dict) or not isinstance(slider.get("edges"), list):
+        raise SourceError("homepage campaign slider is missing; layout changed")
+    campaigns = {}
+    for edge in slider["edges"]:
+        node = resolve(state, edge.get("node"))
+        path = node.get("urlPath", "")
+        if not path.startswith("/sales/") or "preorder" in path or not re.search(r"sale|fest|black-friday|cyber-monday|flash", path, re.I):
+            continue
+        url = canonical(f"/en-id{path}")
+        title = node.get("text")
+        if not title:
+            raise SourceError("featured campaign has no title")
+        item = {"title": title, "url": url, "image": safe_url(field(node, "resizedImageUrl")), "terms": None}
+        if path == "/sales/gametoberfest-sale":
+            if (now or utc_now()) >= datetime.fromisoformat(FEST_TERMS["end"]):
+                continue
+            item["terms"] = copy.deepcopy(FEST_TERMS)
+        item["key"] = digest(url + "|" + title)
+        campaigns[item["key"]] = item
+    return list(campaigns.values())
+
+
+def minecoin_product(product):
+    return bool(isinstance(product, dict) and isinstance(product.get("type"), dict) and product["type"].get("value") == "GAME_POINTS" and
+                re.search(r"\bMinecoins\s+Pack\s*:\s*\d+\s+Coins\b", product.get("name", ""), re.I) and
+                isinstance(product.get("drm"), dict) and product["drm"].get("slug") in {"xbox", "windows-store"})
+
+
+def offers_from_html(html, country="ID", currency="EUR"):
+    state = apollo_state(html, country)
+    search = field(state["ROOT_QUERY"], "search")
+    results = search.get("results") if isinstance(search, dict) else None
+    if not isinstance(results, dict) or not isinstance(results.get("edges"), list) or not isinstance(results.get("totalCount"), int):
+        raise SourceError("Minecoin search results are missing; layout changed")
+    offers = []
+    recognized = 0
+    for edge in results["edges"]:
+        product = resolve(state, edge.get("node"))
+        if not minecoin_product(product):
+            continue
+        recognized += 1
+        regions = [region.get("code") for region in product.get("regions", [])]
+        if not any(region in {"global", "europe"} for region in regions):
+            continue
+        auction = resolve(state, product.get("cheapestAuction"))
+        if auction.get("isInStock") is not True or auction.get("isAddableToCart") is not True:
+            continue
+        money = field(auction, "price") or {}
+        amount = money.get("amount")
+        if money.get("currency") != currency or isinstance(amount, bool) or not isinstance(amount, int) or amount <= 0:
+            raise SourceError("Minecoin listing price/currency is not a valid EUR minor-unit amount")
+        match = re.search(r"Minecoins\s+Pack\s*:\s*(\d+)\s+Coins", product["name"], re.I)
+        slug = product.get("slug")
+        if not slug or not cover(product):
+            raise SourceError("Minecoin listing is missing its product ID or cover")
+        cashback = field(auction, "cashback") or {}
+        cashback_money = cashback.get("price") or {}
+        offers.append({
+            "slug": slug, "title": product["name"], "coins": int(match.group(1)), "region": ", ".join(regions),
+            "url": f"{BASE}/en-id/{slug}?currency={currency}", "image": cover(product),
+            "price_minor": amount, "currency": currency,
+            "seller": (auction.get("merchant") or {}).get("displayname", "Not provided"),
+            "cashback_minor": cashback_money.get("amount") if cashback_money.get("currency") == currency else None,
+            "cashback_percent": (product.get("cashback") or {}).get("valuePercent"),
+            "countries": None, "blocked_countries": [], "notes": [],
+        })
+    if results["totalCount"] > 0 and not results["edges"]:
+        raise SourceError("nonempty Minecoin search reports no readable product entries")
+    if results["totalCount"] > 0 and not recognized:
+        raise SourceError("search has no recognizable Minecoin prepaid products; layout or category changed")
+    return offers, results["totalCount"], len(results["edges"])
+
+
+def enrich_offer(offer, html, country="ID"):
+    state = apollo_state(html, country)
+    product = state.get("Product::" + offer["slug"])
+    if not isinstance(product, dict) or not minecoin_product(product):
+        raise SourceError("product details do not match the requested Minecoin prepaid code")
+    countries = product.get("countriesAlpha2")
+    if not isinstance(countries, list) or not countries or not all(isinstance(code, str) and len(code) == 2 for code in countries):
+        raise SourceError("product activation country list is missing or ambiguous")
+    result = copy.deepcopy(offer)
+    result["countries"] = countries
+    result["blocked_countries"] = product.get("blockedCountries") or []
+    result["notes"] = product.get("notes") or []
+    return result
+
+
+def eligible(offer, country):
+    blocked = [item.get("code") if isinstance(item, dict) else item for item in offer.get("blocked_countries", [])]
+    return bool(offer.get("countries") and country in offer["countries"] and country not in blocked)
+
+
+def collect(country="ID", alternative="DE", currency="EUR", fetcher=fetch_html, now=None):
+    if country != "ID" or alternative != "DE" or currency != "EUR":
+        raise SourceError("this watcher currently supports Indonesia (ID), Germany alternatives (DE), and EUR only")
+    result = {"campaigns": [], "offers": [], "errors": []}
+    try:
+        result["campaigns"] = campaigns_from_html(fetcher(BASE + "/en-id/?currency=EUR"), country, now)
+    except SourceError as error:
+        result["errors"].append({"source": "Eneba homepage campaigns", "error": str(error)})
+    candidates = {}
+    try:
+        for page in range(1, 6):
+            url = BASE + "/en-id/store/minecraft-minecoins?currency=EUR" + (f"&page={page}" if page > 1 else "")
+            offers, total, count = offers_from_html(fetcher(url), country, currency)
+            candidates.update((offer["slug"], offer) for offer in offers)
+            if page * 20 >= total:
+                break
+            if count == 0 or page == 5:
+                raise SourceError("Minecoin search pagination could not be completed")
+    except SourceError as error:
+        result["errors"].append({"source": "Eneba Minecoin search", "error": str(error)})
+    # Check each genuine Global/Europe SKU: similarly named Global codes have different country lists.
+    for offer in candidates.values():
+        try:
+            result["offers"].append(enrich_offer(offer, fetcher(offer["url"]), country))
+        except SourceError as error:
+            result["errors"].append({"source": offer["slug"], "error": str(error)})
+    return result
+
+
+def money(minor):
+    return f"EUR {Decimal(minor) / 100:.2f}"
+
+
+def campaign_embed(campaign):
+    terms = campaign.get("terms")
+    description = "Featured broad sale on Eneba's public Indonesia homepage. Product eligibility and the checkout price depend on the offer."
+    fields = [{"name": "Source", "value": f"[Open campaign and current terms]({campaign['url']})"}]
+    if terms:
+        fields.extend([
+            {"name": "Coupon snapshot", "value": f"**{terms['percent']}% code: {terms['code']}** — terms captured {terms['captured']}."},
+            {"name": "Coupon conditions", "value": terms["text"]},
+            {"name": "Minecoin applicability", "value": "**Unverified.** The stated coupon is for one game; do not assume it applies to Minecoin codes."},
+        ])
+    else:
+        fields.append({"name": "Coupon and dates", "value": "Not verified from public homepage data. Open the campaign for current terms."})
+    embed = {"title": campaign["title"][:256], "url": campaign["url"], "description": description, "fields": fields, "color": 0x7139CB}
+    if campaign.get("image"):
+        embed["image"] = {"url": campaign["image"]}
+    return embed
+
+
+def offer_embed(offer, previous=None, country="ID", alternative="DE"):
+    primary = eligible(offer, country)
+    heading = "Indonesia activation listed" if primary else "Germany alternative only — Indonesia not supported"
+    if previous and offer["price_minor"] < previous["price_minor"]:
+        drop = (Decimal(previous["price_minor"] - offer["price_minor"]) / previous["price_minor"] * 100)
+        event = f"Observed listing-price drop: **{drop:.1f}%**, {money(previous['price_minor'])} → **{money(offer['price_minor'])}**."
+    else:
+        event = f"First observed available listing: **{money(offer['price_minor'])}**. This establishes a baseline; no price discount is claimed."
+    fields = [
+        {"name": "Activation", "value": f"**{heading}**\nEneba allowed-country list: ID {'yes' if primary else 'no'}; DE {'yes' if eligible(offer, alternative) else 'no'}. 'Global' alone does not guarantee activation."},
+        {"name": "Displayed price before checkout fees", "value": f"**{money(offer['price_minor'])}** for {offer['coins']:,} Minecoins\n{money(Decimal(offer['price_minor']) * 1000 / offer['coins'])} per 1,000 Minecoins. Seller: {offer['seller'][:100]}."},
+        {"name": "Final payable cost", "value": "**Unverified.** Payment/service fees and taxes may change the checkout total. This is a public 'From' listing price in EUR; no currency conversion or fee estimate was applied."},
+        {"name": "Redemption", "value": "Digital Minecoin prepaid code, redeemed to your own Microsoft/Xbox account. Your account and physical location must satisfy the product's published restrictions. No region-change or VPN workaround is assumed."},
+    ]
+    cashback = []
+    if isinstance(offer.get("cashback_minor"), int):
+        cashback.append(money(offer["cashback_minor"]))
+    if isinstance(offer.get("cashback_percent"), (int, float)):
+        cashback.append(f"{offer['cashback_percent']}%")
+    if cashback:
+        fields.append({"name": "Cashback — separate benefit", "value": f"Source reports {' / '.join(cashback)} cashback. It is **not** an upfront price reduction and has not been deducted from the displayed price. Check eligibility and wallet terms."})
+    embed = {"title": offer["title"][:256], "url": offer["url"], "description": event, "fields": fields, "color": 0x3B9956 if primary else 0xE1A634}
+    embed["image"] = {"url": offer["image"]}
+    return embed
+
+
+def empty_state():
+    return {"version": 1, "prices": {}, "notified": {}, "campaigns": {}, "failures": {}}
+
+
+def read_state(file):
+    try:
+        state = json.loads(Path(file).read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        return empty_state()
+    if not isinstance(state, dict) or not all(isinstance(state.get(key), dict) for key in ("prices", "notified", "campaigns", "failures")):
+        raise SourceError("Eneba history is invalid; refusing to reset notification history")
+    return state
+
+
+def save_state(state, file):
+    target = Path(file)
+    temporary = target.with_name(target.name + ".tmp")
+    temporary.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(target)
+
+
+def plan_events(snapshot, state, min_drop_percent=1, country="ID", alternative="DE"):
+    events = []
+    for campaign in snapshot["campaigns"]:
+        if campaign["key"] not in state["campaigns"]:
+            events.append({"key": "campaign:" + campaign["key"], "campaign": campaign, "embed": campaign_embed(campaign)})
+    # Keep regions separate and compare available listings with equal Minecoin quantities.
+    groups = {}
+    for offer in snapshot["offers"]:
+        scope = "ID" if eligible(offer, country) else "DE" if eligible(offer, alternative) else None
+        if scope:
+            key = (scope, offer["coins"])
+            if key not in groups or offer["price_minor"] < groups[key]["price_minor"]:
+                groups[key] = offer
+    for group, offer in sorted(groups.items(), key=lambda item: (0 if item[0][0] == "ID" else 1, item[0][1])):
+        previous = state["prices"].get(offer["slug"])
+        baseline = "baseline:" + offer["slug"]
+        if baseline not in state["notified"]:
+            event_key = baseline
+        elif previous and previous.get("currency") == offer["currency"] and offer["price_minor"] < previous["price_minor"] and (previous["price_minor"] - offer["price_minor"]) * 100 / previous["price_minor"] >= min_drop_percent:
+            event_key = f"drop:{offer['slug']}:{previous['price_minor']}:{offer['price_minor']}:{previous.get('at', '')}"
+        else:
+            continue
+        if event_key not in state["notified"]:
+            events.append({"key": event_key, "offer": offer, "embed": offer_embed(offer, previous if event_key.startswith("drop:") else None, country, alternative)})
+    for error in snapshot["errors"]:
+        if state["failures"].get(error["source"]) != error["error"]:
+            events.append({"key": "failure:" + digest(error["source"] + error["error"]), "failure": error,
+                           "embed": {"title": "Eneba source check failed", "description": f"{error['source']}: {error['error']}", "color": 0xBF4545,
+                                     "fields": [{"name": "Meaning", "value": "This is a monitoring failure, not evidence that sales or Minecoin offers disappeared. Previous successful prices are preserved."}]}})
+    return events
+
+
+def embed_size(embed):
+    return len(embed.get("title", "")) + len(embed.get("description", "")) + sum(len(field["name"]) + len(field["value"]) for field in embed.get("fields", []))
+
+
+def batches(events):
+    batch, size = [], 0
+    for event in events:
+        length = embed_size(event["embed"])
+        if length > 6000:
+            raise SourceError("Eneba notification exceeds Discord's embed limit")
+        if batch and (len(batch) == 10 or size + length > 6000):
+            yield batch
+            batch, size = [], 0
+        batch.append(event)
+        size += length
+    if batch:
+        yield batch
+
+
+def payload(batch):
+    return {"username": "Eneba Sale Watcher", "content": "Eneba campaign / Minecoin code update. Activation region and checkout fees are shown separately.",
+            "embeds": [event["embed"] for event in batch], "allowed_mentions": {"parse": []}}
+
+
+def post_discord(webhook, message, opener=urlopen, sleeper=time.sleep):
+    parsed = urlsplit(webhook)
+    query = dict(parse_qsl(parsed.query))
+    query["wait"] = "true"
+    url = urlunsplit((parsed.scheme, parsed.netloc, parsed.path, urlencode(query), parsed.fragment))
+    for attempt in range(5):
+        request = Request(url, data=json.dumps(message).encode(), headers={"Content-Type": "application/json", "User-Agent": UA}, method="POST")
+        try:
+            with opener(request, timeout=30) as response:
+                acknowledgment = json.load(response)
+            if not acknowledgment.get("id") or not acknowledgment.get("channel_id"):
+                raise SourceError("Discord did not return a message acknowledgment; batch remains pending")
+            return {"message_id": acknowledgment["id"], "channel_id": acknowledgment["channel_id"]}
+        except HTTPError as error:
+            if error.code == 429 and attempt < 4:
+                try:
+                    delay = float(json.load(error).get("retry_after", 1))
+                except (ValueError, TypeError):
+                    delay = 1
+                finally:
+                    error.close()
+                if delay > 60:
+                    raise SourceError("Discord rate limit exceeds 60 seconds; batch remains pending") from None
+                sleeper(max(0.25, delay))
+                continue
+            error.close()
+            if error.code >= 500 and attempt < 4:
+                sleeper(attempt + 1)
+                continue
+            raise SourceError(f"Discord HTTP {error.code}; batch remains pending") from None
+        except (URLError, TimeoutError, ValueError):
+            raise SourceError("Discord delivery was not acknowledged; batch remains pending") from None
+
+
+def run(snapshot, state, dry_run=False, webhook=None, save=None, post=post_discord, now=None, min_drop_percent=1):
+    now = now or utc_now()
+    events = plan_events(snapshot, state, min_drop_percent)
+    grouped = list(batches(events))
+    if dry_run:
+        return {"dry_run": True, "offers_checked": len(snapshot["offers"]), "indonesia_eligible_offers": sum(eligible(offer, "ID") for offer in snapshot["offers"]),
+                "messages": [payload(batch) for batch in grouped], "source_errors": snapshot["errors"]}
+    if grouped and not webhook:
+        raise SourceError("DISCORD_WEBHOOK_URL is missing; use --dry-run to preview")
+    updated = copy.deepcopy(state)
+    acknowledgments = []
+    for batch in grouped:
+        acknowledgments.append(post(webhook, payload(batch)))
+        for event in batch:
+            updated["notified"][event["key"]] = stamp(now)
+            if "campaign" in event:
+                updated["campaigns"][event["campaign"]["key"]] = stamp(now)
+            if "offer" in event:
+                offer = event["offer"]
+                updated["prices"][offer["slug"]] = {"price_minor": offer["price_minor"], "currency": offer["currency"], "at": stamp(now)}
+            if "failure" in event:
+                failure = event["failure"]
+                updated["failures"][failure["source"]] = failure["error"]
+        if save:
+            save(updated)
+    # Only complete successful collection can reset failure status. Failed products keep their last price.
+    for offer in snapshot["offers"]:
+        updated["prices"][offer["slug"]] = {"price_minor": offer["price_minor"], "currency": offer["currency"], "at": stamp(now)}
+    updated["failures"] = {error["source"]: error["error"] for error in snapshot["errors"]}
+    if save:
+        save(updated)
+    return {"sent_events": len(events), "offers_checked": len(snapshot["offers"]), "acknowledgments": acknowledgments, "source_errors": snapshot["errors"]}
+
+
+def main(argv=None):
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--dry-run", action="store_true")
+    parser.add_argument("--fixture", help="offline snapshot JSON; requires dry run")
+    args = parser.parse_args(argv)
+    dry_run = args.dry_run or os.getenv("DRY_RUN", "").lower() in {"1", "true"}
+    if args.fixture and not dry_run:
+        parser.error("--fixture requires --dry-run")
+    now = utc_now()
+    snapshot = json.loads(Path(args.fixture).read_text(encoding="utf-8")) if args.fixture else collect(
+        os.getenv("ENEBA_COUNTRY", "ID"), os.getenv("ENEBA_ALT_COUNTRY", "DE"), os.getenv("ENEBA_CURRENCY", "EUR"), now=now)
+    file = os.getenv("ENEBA_STATE_FILE", STATE_FILE)
+    minimum = float(os.getenv("ENEBA_MIN_DROP_PERCENT", "1"))
+    if not 0 <= minimum <= 100:
+        raise SourceError("ENEBA_MIN_DROP_PERCENT must be between 0 and 100")
+    result = run(snapshot, read_state(file), dry_run=dry_run, webhook=os.getenv("DISCORD_WEBHOOK_URL"), save=lambda state: save_state(state, file), now=now, min_drop_percent=minimum)
+    print(json.dumps(result, indent=2))
+    return 1 if snapshot["errors"] else 0
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except (SourceError, OSError, ValueError) as error:
+        # Never log request objects, webhook URLs or response bodies containing credentials.
+        print(f"Eneba watcher failed: {error}", file=sys.stderr)
+        sys.exit(1)
