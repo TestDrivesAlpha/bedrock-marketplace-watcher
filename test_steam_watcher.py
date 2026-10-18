@@ -53,6 +53,7 @@ class SteamWatcherTests(unittest.TestCase):
         self.assertEqual(embed["image"]["url"], watcher.STEAM_LOGO)
         self.assertEqual(embed["url"], "https://store.steampowered.com/specials/")
         self.assertEqual(payload["allowed_mentions"], {"parse": []})
+        self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
         self.assertIn("autumn-2026", self.state.read_text())
         self.assertIn("winter-2026", self.state.read_text())
 
@@ -79,6 +80,9 @@ class SteamWatcherTests(unittest.TestCase):
                   <meta property="og:image" content="https://cdn.akamai.steamstatic.com/sale.jpg">'''
         self.assertEqual(watcher.event_image(self.sale, html),
                          ("https://cdn.akamai.steamstatic.com/sale.jpg", True))
+        payload = watcher.build_payload(self.sale, html)
+        self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
+        self.assertEqual(payload["embeds"][0]["image"]["url"], "https://cdn.akamai.steamstatic.com/sale.jpg")
 
     def test_wrong_event_or_untrusted_image_falls_back_to_logo(self):
         for title, image in [
