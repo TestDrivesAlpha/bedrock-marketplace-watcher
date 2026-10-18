@@ -82,11 +82,14 @@ region, format, stock details and DLC requirements. After the initial baseline,
 price drops and availability changes produce updates. Failed-source prices are
 not reused as fresh observations.
 
-Both new watchers post to the existing game-deal destination through the
-`DISCORD_STEAM_WEBHOOK_URL` repository secret, using distinct bot names. No new
-webhook credential is required. State is kept in `.eneba-price-state.json` and
-`.pokemon-price-state.json`; successful delivery batches are checkpointed so a
-later failure leaves the remaining alerts pending.
+The Eneba watcher posts to `#eneba-deals` through the required
+`DISCORD_ENEBA_WEBHOOK_URL` repository secret. The Pokemon watcher posts to
+`#pokemon-deals` through the required `DISCORD_POKEMON_WEBHOOK_URL` secret.
+Each live watcher requires its own secret; a missing secret stops that job with
+an error naming the missing secret. Dry runs can preview alerts without secrets.
+Steam continues to use `DISCORD_STEAM_WEBHOOK_URL`. State is kept in
+`.eneba-price-state.json` and `.pokemon-price-state.json`; successful delivery
+batches are checkpointed so a later failure leaves the remaining alerts pending.
 
 ## Testing and manual runs
 
@@ -95,6 +98,12 @@ enabled by default for manual runs. A dry run previews currently eligible alerts
 without posting to Discord or changing notification history. Scheduled runs send
 eligible alerts normally. Existing notification history can mean there is no new
 alert to preview.
+
+The **Test Discord notification** workflow sends one labelled destination-check
+message to Minecraft (the default), Steam, Eneba or Pokemon using that watcher's
+own webhook secret. Optionally supply `expected_channel_id` to require a matching
+Discord channel acknowledgement. Logs contain only the returned message/channel
+IDs on success. This test does not change price or notification history.
 
 Run the offline tests from the repository root:
 
