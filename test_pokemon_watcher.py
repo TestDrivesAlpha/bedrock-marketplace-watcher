@@ -158,6 +158,7 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(embed["image"]["url"], offer()["image"])
         self.assertIn("unverified", embed["description"])
         self.assertEqual(payload["allowed_mentions"], {"parse": []})
+        self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
         self.assertEqual(self.read_state()["pending"], [])
 
     def test_unchanged_or_increased_price_does_not_repeat(self):
@@ -258,6 +259,7 @@ class AlertTests(unittest.TestCase):
         self.assertEqual(sum(len(ids) for ids, _ in batches), 35)
         self.assertEqual(len(set(event_id for ids, _ in batches for event_id in ids)), 35)
         for _, payload in batches:
+            self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
             self.assertLessEqual(len(payload["embeds"]), 10)
             self.assertLessEqual(sum(len(json.dumps(embed, ensure_ascii=False)) for embed in payload["embeds"]), 5500)
 
@@ -296,8 +298,65 @@ class AlertTests(unittest.TestCase):
         self.assertIn("wait=true", fetch.call_args.args[0].full_url)
         self.assertNotIn("wait=false", fetch.call_args.args[0].full_url)
 
+    def test_requested_overview_sends_fresh_prices_without_creating_history(self):
+        self.run_prices([offer(price=4200)], announce_current=True)
+        self.assertFalse(self.path.exists())
+        payload = self.post.call_args.args[1]
+        self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
+        self.assertIn("requested refresh", payload["content"])
+        description = payload["embeds"][0]["description"]
+        self.assertIn("Current overview — requested refresh", description)
+        self.assertIn("EUR 42.00", description)
+        self.assertNotIn("First observed", description)
+        self.assertNotIn("lowest observed", description)
+        self.assertNotIn("Price dropped", description)
+
+    def test_overview_preserves_existing_history_and_pending_events_exactly(self):
+        self.post.side_effect = RuntimeError("HTTP 500")
+        with self.assertRaises(RuntimeError):
+            self.run_prices([offer(price=4500)])
+        original = self.path.read_bytes()
+        self.post.side_effect = None
+        self.run_prices([offer(price=4200)], announce_current=True)
+        self.assertEqual(self.path.read_bytes(), original)
+        self.assertEqual(len(self.read_state()["pending"]), 1)
+
+    def test_overview_dry_run_never_posts_reads_or_writes_history(self):
+        self.path.write_text("not valid json; overview must not read this", encoding="utf-8")
+        original = self.path.read_bytes()
+        self.run_prices([offer(format="digital")], announce_current=True, dry_run=True)
+        self.post.assert_not_called()
+        self.assertEqual(self.path.read_bytes(), original)
+
+    def test_failed_overview_delivery_does_not_change_history(self):
+        self.path.write_text('{"pending": ["keep exactly"]}\n', encoding="utf-8")
+        original = self.path.read_bytes()
+        self.post.side_effect = RuntimeError("HTTP 500")
+        with self.assertRaises(RuntimeError):
+            self.run_prices([offer()], announce_current=True)
+        self.assertEqual(self.path.read_bytes(), original)
+
+    def test_overview_keeps_digital_eligibility_dlc_requirement_and_coverage(self):
+        item_id = "pokmon-sword-expansion-pass"
+        current = offer(item_id=item_id, title=watcher.ITEMS[item_id]["title"], kind="DLC", format="digital",
+                        requires=watcher.ITEMS[item_id]["requires"])
+        self.run_prices([current], announce_current=True, coverage="Coverage: DE tracker only.")
+        embed = self.post.call_args.args[1]["embeds"][0]
+        self.assertIn("NOT confirmed", embed["description"])
+        self.assertIn("Pokémon Sword base game required", embed["description"])
+        self.assertIn("Coverage: DE tracker only", embed["footer"]["text"])
+
 
 class HealthTests(unittest.TestCase):
+    def test_main_parses_announce_current_as_explicit_boolean(self):
+        for value, expected in (("true", True), ("false", False)):
+            with self.subTest(value=value), \
+                    patch.dict(watcher.os.environ, {"ANNOUNCE_CURRENT": value, "DRY_RUN": "true", "GITHUB_STEP_SUMMARY": ""}), \
+                    patch.object(watcher, "gather_offers", return_value=([offer()], [])), \
+                    patch.object(watcher, "run") as run, contextlib.redirect_stdout(io.StringIO()):
+                watcher.main()
+                self.assertIs(run.call_args.kwargs["announce_current"], expected)
+
     def test_optional_source_failure_is_visible_and_does_not_fail_run(self):
         errors = ["playasia/pokemon-sword/JP import: HTTP 403", "pse/pokemon-violet/ID: HTTP 403"]
         with patch.dict(watcher.os.environ, {"DRY_RUN": "true", "GITHUB_STEP_SUMMARY": ""}), \
