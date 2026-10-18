@@ -7,6 +7,10 @@ on:
         description: Preview current offers without posting or changing history
         type: boolean
         default: true
+      announce_current:
+        description: Send a fresh current overview without resetting alert history
+        type: boolean
+        default: false
   schedule:
     - cron: "37 * * * *"
 
@@ -61,6 +65,7 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
           WEBHOOK_SECRET_NAME: ${{ matrix.webhook_secret }}
           DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+          ANNOUNCE_CURRENT: ${{ github.event_name == 'workflow_dispatch' && inputs.announce_current && 'true' || 'false' }}
           ENEBA_COUNTRY: ID
           ENEBA_ALT_COUNTRY: DE
           ENEBA_CURRENCY: EUR
