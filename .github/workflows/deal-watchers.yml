@@ -36,15 +36,26 @@ jobs:
             script: eneba_watcher.py
             tests: test_eneba_watcher.py
             state: .eneba-price-state.json
+            destination: eneba
+            journal: .discord-posts-eneba.json
+            snapshot: .discord-current-eneba.json
             webhook_secret: DISCORD_ENEBA_WEBHOOK_URL
           - label: Pokemon games and DLC
             script: pokemon_watcher.py
             tests: test_pokemon_watcher.py
             state: .pokemon-price-state.json
+            destination: pokemon
+            journal: .discord-posts-pokemon.json
+            snapshot: .discord-current-pokemon.json
             webhook_secret: DISCORD_POKEMON_WEBHOOK_URL
     env:
       PYTHONDONTWRITEBYTECODE: "1"
       PYTHONUNBUFFERED: "1"
+      DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
+      DISCORD_RETENTION_FILE: ${{ matrix.journal }}
+      DISCORD_RETENTION_SNAPSHOT: ${{ matrix.snapshot }}
+      RETENTION_ENABLED: "true"
+      RETENTION_DAYS: "60"
     steps:
       - name: Download repository
         uses: actions/checkout@v7
@@ -57,14 +68,24 @@ jobs:
           python-version: "3.13"
 
       - name: Test this watcher
+        id: tests
+        env:
+          DISCORD_RETENTION_FILE: ""
+          DISCORD_RETENTION_SNAPSHOT: ""
         run: python -B -m unittest -v "${{ matrix.tests }}"
+
+      - name: Test safe message retention
+        id: retention_tests
+        env:
+          DISCORD_RETENTION_FILE: ""
+          DISCORD_RETENTION_SNAPSHOT: ""
+        run: python -B -m unittest -v test_discord_retention.py
 
       - name: Check current offers
         id: offers
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
           WEBHOOK_SECRET_NAME: ${{ matrix.webhook_secret }}
-          DRY_RUN: ${{ github.event_name == 'workflow_dispatch' && inputs.dry_run && 'true' || 'false' }}
           ANNOUNCE_CURRENT: ${{ github.event_name == 'workflow_dispatch' && inputs.announce_current && 'true' || 'false' }}
           ENEBA_COUNTRY: ID
           ENEBA_ALT_COUNTRY: DE
@@ -81,19 +102,30 @@ jobs:
           fi
           python -B "${{ matrix.script }}"
 
+      - name: Refresh or remove tracked alerts older than 60 days
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.retention_tests.outcome == 'success' && (steps.offers.outcome == 'success' || steps.offers.outcome == 'failure') }}
+        env:
+          DISCORD_WEBHOOK_URL: ${{ secrets[matrix.webhook_secret] }}
+          DESTINATION: ${{ matrix.destination }}
+        run: |
+          if [ ! -f "$DISCORD_RETENTION_SNAPSHOT" ]; then
+            echo "No fresh source snapshot; cleanup is deferred."
+            exit 0
+          fi
+          args=()
+          if [ "$DRY_RUN" = "true" ]; then args+=(--dry-run); fi
+          python -B discord_retention.py --destination "$DESTINATION" --journal "$DISCORD_RETENTION_FILE" --snapshot "$DISCORD_RETENTION_SNAPSHOT" "${args[@]}"
+
       - name: Save observed prices and delivery checkpoints
         if: ${{ !cancelled() && (steps.offers.outcome == 'success' || steps.offers.outcome == 'failure') && !(github.event_name == 'workflow_dispatch' && inputs.dry_run) }}
         env:
           STATE_PATH: ${{ matrix.state }}
         run: |
-          if [ ! -f "$STATE_PATH" ]; then
-            echo "No price history was written."
-            exit 0
-          fi
-
           git config user.name "Game Deal Watcher"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -- "$STATE_PATH"
+          for file in "$STATE_PATH" "$DISCORD_RETENTION_FILE"; do
+            if [ -f "$file" ]; then git add -- "$file"; fi
+          done
           if git diff --cached --quiet; then
             echo "Price and notification history are unchanged."
             exit 0
