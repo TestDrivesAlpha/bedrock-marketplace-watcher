@@ -21,6 +21,10 @@ on:
         description: Save the matching webhook avatar and post one artwork header
         type: boolean
         default: false
+      use_saved_profile:
+        description: Verify the saved webhook profile without message-level name or avatar overrides
+        type: boolean
+        default: false
 
 permissions: {}
 
@@ -38,11 +42,13 @@ jobs:
           DISCORD_WEBHOOK_URL: ${{ secrets[env.WEBHOOK_SECRET_NAME] }}
           EXPECTED_CHANNEL_ID: ${{ inputs.expected_channel_id }}
           SEND_BANNER: ${{ inputs.send_banner && 'true' || 'false' }}
+          USE_SAVED_PROFILE: ${{ inputs.use_saved_profile && 'true' || 'false' }}
         run: |
           python3 <<'PY'
           import base64
           import json
           import os
+          import re
           from urllib.error import HTTPError, URLError
           from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
           from urllib.request import Request, urlopen
@@ -78,9 +84,10 @@ jobs:
                   "content": "**Webhook destination verification**\nDestination: **" + destination + "**. This is one routing test message.",
                   "allowed_mentions": {"parse": []},
               }
-              if os.environ.get("SEND_BANNER", "false") == "true":
-                  slug, title, purpose, color = artwork[destination]
-                  assets = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/"
+              send_banner = os.environ.get("SEND_BANNER", "false") == "true"
+              use_saved_profile = os.environ.get("USE_SAVED_PROFILE", "false") == "true"
+              identity = None
+              if send_banner or use_saved_profile:
                   control_url = urlunsplit(parts._replace(query="", fragment=""))
                   identity_request = Request(control_url, method="GET",
                                              headers={"User-Agent": "Discord-Destination-Verification/1.0"})
@@ -95,6 +102,13 @@ jobs:
                       raise SystemExit("Webhook identity returned invalid IDs; artwork was not changed.")
                   if expected and identity["channel_id"] != expected:
                       raise SystemExit("Webhook channel differs from expected_channel_id; artwork was not changed.")
+                  if use_saved_profile and not send_banner and not (
+                      isinstance(identity.get("avatar"), str) and identity["avatar"]
+                  ):
+                      raise SystemExit("Saved webhook profile has no avatar; no verification was posted.")
+              if send_banner:
+                  slug, title, purpose, color = artwork[destination]
+                  assets = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/"
                   avatar_url = assets + slug + "-avatar.png"
                   avatar_request = Request(avatar_url, headers={"User-Agent": "Discord-Destination-Verification/1.0"})
                   with urlopen(avatar_request, timeout=30) as response:
@@ -115,6 +129,7 @@ jobs:
                       for key in ("id", "channel_id")
                   ) or updated["id"] != identity["id"] or updated["channel_id"] != identity["channel_id"] or updated.get("name") != usernames[destination] or not isinstance(updated.get("avatar"), str) or not updated["avatar"]:
                       raise SystemExit("Webhook avatar update was not confirmed; no header was posted.")
+                  identity = updated
                   payload.update({
                       "content": "**Channel header — " + title + "**",
                       "avatar_url": avatar_url,
@@ -125,6 +140,13 @@ jobs:
                           "color": color,
                       }],
                   })
+              if use_saved_profile:
+                  if not re.fullmatch(r"(?:a_)?[0-9a-fA-F]{32}", identity.get("avatar") or ""):
+                      raise SystemExit("Saved webhook profile returned an invalid avatar hash; no verification was posted.")
+                  payload.pop("username", None)
+                  payload.pop("avatar_url", None)
+                  if not send_banner:
+                      payload["content"] = "**Saved webhook profile verification**\nDestination: **" + destination + "**. This message uses the saved webhook name and avatar without overrides."
               request = Request(url, data=json.dumps(payload).encode("utf-8"), method="POST",
                                 headers={"Content-Type": "application/json", "User-Agent": "Discord-Destination-Verification/1.0"})
               with urlopen(request, timeout=30) as response:
@@ -142,7 +164,32 @@ jobs:
               for key in ("id", "channel_id")
           ):
               raise SystemExit("Discord destination verification returned invalid message/channel IDs.")
-          print(json.dumps({"message_id": acknowledgement["id"], "channel_id": acknowledgement["channel_id"]}))
+          if use_saved_profile:
+              author = acknowledgement.get("author")
+              if not isinstance(author, dict):
+                  raise SystemExit("Saved webhook profile verification returned no message author.")
+              matches = (
+                  acknowledgement.get("webhook_id") == identity["id"]
+                  and author.get("id") == identity["id"]
+                  and acknowledgement["channel_id"] == identity["channel_id"]
+                  and author.get("avatar") == identity["avatar"]
+              )
+              print(json.dumps({
+                  "message_id": acknowledgement["id"],
+                  "channel_id": acknowledgement["channel_id"],
+                  "saved_webhook_id": identity["id"],
+                  "saved_webhook_name": identity.get("name"),
+                  "saved_avatar_hash": identity["avatar"],
+                  "message_webhook_id": acknowledgement.get("webhook_id") if isinstance(acknowledgement.get("webhook_id"), str) and acknowledgement["webhook_id"].isascii() and acknowledgement["webhook_id"].isdigit() else None,
+                  "message_author_id": author.get("id") if isinstance(author.get("id"), str) and author["id"].isascii() and author["id"].isdigit() else None,
+                  "message_author_name": author.get("username") if isinstance(author.get("username"), str) else None,
+                  "message_avatar_hash": author.get("avatar") if isinstance(author.get("avatar"), str) and re.fullmatch(r"(?:a_)?[0-9a-fA-F]{32}", author["avatar"]) else None,
+                  "saved_profile_matches": matches,
+              }))
+              if not matches:
+                  raise SystemExit("Discord acknowledged a different saved webhook profile.")
+          else:
+              print(json.dumps({"message_id": acknowledgement["id"], "channel_id": acknowledgement["channel_id"]}))
           if expected and acknowledgement["channel_id"] != expected:
               raise SystemExit("Discord acknowledged a channel different from expected_channel_id.")
           PY
