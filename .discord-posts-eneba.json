@@ -142,6 +142,52 @@
       "message_id": "1561609166194343948",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1561650176408420367": {
+      "channel_id": "1561193661645987920",
+      "created_at": "2026-10-19T08:00:09.359287Z",
+      "items": [
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-330-coins-xbox-live-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        },
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        },
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-3500-coins-xbox-one-xbox-live-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        },
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-8800-coins-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        },
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-330-coins-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        }
+      ],
+      "message_id": "1561650176408420367",
+      "purpose": "overview",
+      "replacement_ids": []
+    },
+    "1561650177612324896": {
+      "channel_id": "1561193661645987920",
+      "created_at": "2026-10-19T08:00:09.359287Z",
+      "items": [
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-1720-coins-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        },
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-3500-coins-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        }
+      ],
+      "message_id": "1561650177612324896",
+      "purpose": "overview",
+      "replacement_ids": []
     }
   },
   "version": 1
