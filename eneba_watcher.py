@@ -21,6 +21,7 @@ UA = "EnebaDealsWatcher/1.0 (+https://github.com/TestDrivesAlpha/bedrock-marketp
 BASE = "https://www.eneba.com"
 STATE_FILE = ".eneba-price-state.json"
 AVATAR_URL = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/eneba-avatar.png"
+BANNER_URL = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/eneba-banner.png"
 FEST_TERMS = {
     "captured": "2026-10-17", "code": "FEST", "percent": 13,
     "end": "2026-10-18T23:59:00+02:00",
@@ -291,6 +292,11 @@ def money(minor):
     return f"EUR {Decimal(minor) / 100:.2f}"
 
 
+def status_artwork(embed):
+    """Identify a monitoring/status card without implying product artwork."""
+    return dict(embed, thumbnail={"url": AVATAR_URL}, footer={"text": "Eneba watcher artwork"})
+
+
 def campaign_embed(campaign, overview=False):
     terms = campaign.get("terms")
     description = f"Featured broad sale on Eneba's public homepage, with **{campaign['source_country']} storefront context**. This is a regional reference; campaign eligibility for Indonesia is unverified. Product eligibility and the checkout price depend on the offer."
@@ -308,6 +314,11 @@ def campaign_embed(campaign, overview=False):
     embed = {"title": campaign["title"][:256], "url": campaign["url"], "description": description, "fields": fields, "color": 0x7139CB}
     if campaign.get("image"):
         embed["image"] = {"url": campaign["image"]}
+        embed["thumbnail"] = {"url": campaign["image"]}
+    else:
+        embed["image"] = {"url": BANNER_URL}
+        embed["thumbnail"] = {"url": AVATAR_URL}
+        embed["footer"] = {"text": "Eneba channel artwork — campaign image unavailable"}
     return embed
 
 
@@ -337,6 +348,7 @@ def offer_embed(offer, previous=None, country="ID", alternative="DE", overview=F
         fields.append({"name": "Cashback — separate benefit", "value": f"Source reports {' / '.join(cashback)} cashback. It is **not** an upfront price reduction and has not been deducted from the displayed price. Check eligibility and wallet terms."})
     embed = {"title": offer["title"][:256], "url": offer["url"], "description": event, "fields": fields, "color": 0x3B9956 if primary else 0xE1A634}
     embed["image"] = {"url": offer["image"]}
+    embed["thumbnail"] = {"url": offer["image"]}
     return embed
 
 
@@ -396,13 +408,15 @@ def plan_events(snapshot, state, min_drop_percent=1, country="ID", alternative="
     for error in snapshot["errors"]:
         if state["failures"].get(error["source"]) != error["error"]:
             events.append({"key": "failure:" + digest(error["source"] + error["error"]), "failure": error,
-                           "embed": {"title": "Eneba source check failed", "description": f"{error['source']}: {error['error']}", "color": 0xBF4545,
-                                     "fields": [{"name": "Meaning", "value": "This is a monitoring failure, not evidence that sales or Minecoin offers disappeared. Previous successful prices are preserved."}]}})
+                           "embed": status_artwork({"title": "Eneba source check failed", "description": f"{error['source']}: {error['error']}", "color": 0xBF4545,
+                                     "fields": [{"name": "Meaning", "value": "This is a monitoring failure, not evidence that sales or Minecoin offers disappeared. Previous successful prices are preserved."}]})})
     return events
 
 
 def embed_size(embed):
-    return len(embed.get("title", "")) + len(embed.get("description", "")) + sum(len(field["name"]) + len(field["value"]) for field in embed.get("fields", []))
+    return (len(embed.get("title", "")) + len(embed.get("description", ""))
+            + len(embed.get("footer", {}).get("text", ""))
+            + sum(len(field["name"]) + len(field["value"]) for field in embed.get("fields", [])))
 
 
 def batches(events):
@@ -484,8 +498,8 @@ def export_retention_snapshot(snapshot, now, path):
     events += [{"offer": offer, "embed": offer_embed(offer, overview=True)}
                for offer in selected_offers(snapshot["offers"])]
     for error in snapshot["errors"]:
-        events.append({"failure": error, "embed": {"title": "Eneba source check failed",
-            "description": f"{error['source']}: {error['error']}", "color": 0xBF4545}})
+        events.append({"failure": error, "embed": status_artwork({"title": "Eneba source check failed",
+            "description": f"{error['source']}: {error['error']}", "color": 0xBF4545})})
     items = {}
     for event in events:
         reference = retention_item(event)
@@ -552,13 +566,13 @@ def run_overview(snapshot, dry_run=False, webhook=None, post=post_discord, check
     events = [{"campaign": campaign, "embed": campaign_embed(campaign, overview=True)} for campaign in snapshot["campaigns"]]
     events.extend({"offer": offer, "embed": offer_embed(offer, overview=True)} for offer in selected_offers(snapshot["offers"]))
     for error in snapshot["errors"]:
-        events.append({"failure": error, "embed": {
+        events.append({"failure": error, "embed": status_artwork({
             "title": "Current overview — source unavailable", "color": 0xBF4545,
             "description": f"{error['source']}: {error['error']}",
             "fields": [{"name": "Current data unavailable", "value": "This refresh cannot confirm offers from the failed source. Historical prices were not reused as current offers, and regular notification history was not changed."}],
-        }})
+        })})
     if not events:
-        events.append({"embed": {"title": "Current overview — requested refresh", "description": "The successful public source checks returned no matching available Minecoin listings or featured broad campaigns. Regular notification history was not changed.", "color": 0x7139CB}})
+        events.append({"embed": status_artwork({"title": "Current overview — requested refresh", "description": "The successful public source checks returned no matching available Minecoin listings or featured broad campaigns. Regular notification history was not changed.", "color": 0x7139CB})})
     grouped = list(batches(events))
     result = {"announce_current": True, "offers_checked": len(snapshot["offers"]),
               "indonesia_eligible_offers": sum(eligible(offer, "ID") for offer in snapshot["offers"]),

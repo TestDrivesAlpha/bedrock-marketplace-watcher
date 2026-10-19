@@ -4,6 +4,7 @@ import { pathToFileURL } from "node:url";
 const API = process.env.CATALOG_API_URL || "http://127.0.0.1:3000";
 const STATE_FILE = process.env.WATCHER_STATE_FILE || "watcher-state.json";
 const OFFICIAL_ITEM_API = "https://net-secondary.web.minecraft-services.net/api/v1.0/en-us/marketplace/item/";
+const WATCHER_ARTWORK = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/alex-marketplace-v2-avatar.png";
 const MINECOIN_IDS = new Set([
   "ecd19d3c-7635-402c-a185-eb11cb6c6946",
   "0113e233-7637-48e7-91b0-349fdc74713d",
@@ -262,6 +263,10 @@ export function buildEmbed(unit, state) {
     footer: { text: shorten(`Promotion: ${sale.title ?? sale.name ?? "Minecraft Marketplace"} | Item: ${item.id}`, 240) },
   };
   if (item.image) embed.image = { url: item.image };
+  else {
+    embed.thumbnail = { url: WATCHER_ARTWORK };
+    embed.footer.text = shorten(`Watcher artwork; product image unavailable | ${embed.footer.text}`, 240);
+  }
   return embed;
 }
 

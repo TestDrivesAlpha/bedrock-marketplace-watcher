@@ -174,6 +174,85 @@ class EnebaWatcherTests(unittest.TestCase):
         self.assertIn("Unverified", terms)
         self.assertEqual(watcher.campaigns_from_html(html(homepage()), now=datetime(2026, 10, 19, 2, tzinfo=timezone.utc)), [])
 
+    def test_missing_campaign_cover_uses_labeled_brand_banner_in_alert_overview_and_refresh(self):
+        home = homepage()
+        del next(iter(home["ROOT_QUERY"].values()))["edges"][0]['node']['resizedImageUrl({"width":1500})']
+        campaign = watcher.campaigns_from_html(html(home), now=NOW)[0]
+        original = copy.deepcopy(campaign)
+        data = snapshot(campaigns=[campaign])
+        alert = watcher.plan_events(data, watcher.empty_state())[0]["embed"]
+        overview = watcher.run_overview(data, dry_run=True)["messages"][0]["embeds"][0]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "current.json"
+            watcher.export_retention_snapshot(data, NOW, path)
+            refreshed = json.loads(path.read_text(encoding="utf8"))["items"]["campaign:" + campaign["key"]]["embed"]
+        for embed in (alert, overview, refreshed):
+            self.assertEqual(embed["image"]["url"], watcher.BANNER_URL)
+            self.assertEqual(embed["thumbnail"]["url"], watcher.AVATAR_URL)
+            self.assertIn("channel artwork", embed["footer"]["text"])
+            self.assertIn("campaign image unavailable", embed["footer"]["text"])
+            self.assertEqual(embed["title"], campaign["title"])
+            self.assertEqual(embed["url"], campaign["url"])
+            self.assertIn("ID storefront context", embed["description"])
+            self.assertEqual(embed["fields"], alert["fields"])
+        self.assertEqual(campaign, original)
+        genuine = watcher.campaigns_from_html(html(homepage()), now=NOW)[0]
+        self.assertEqual(watcher.campaign_embed(genuine)["image"]["url"], IMAGE)
+        self.assertEqual(watcher.campaign_embed(genuine)["thumbnail"]["url"], IMAGE)
+        self.assertNotIn("footer", watcher.campaign_embed(genuine))
+
+    def test_real_offer_and_campaign_artwork_is_visible_at_top_in_alert_overview_and_refresh(self):
+        current = offer()
+        campaign = watcher.campaigns_from_html(html(homepage()), now=NOW)[0]
+        data = snapshot(offers=[current], campaigns=[campaign])
+        normal = [event["embed"] for event in watcher.plan_events(data, watcher.empty_state())]
+        overview = [embed for message in watcher.run_overview(data, dry_run=True)["messages"] for embed in message["embeds"]]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "current.json"
+            watcher.export_retention_snapshot(data, NOW, path)
+            refreshed = [item["embed"] for item in json.loads(path.read_text(encoding="utf8"))["items"].values()]
+        for embeds in (normal, overview, refreshed):
+            self.assertEqual(len(embeds), 2)
+            artwork = {embed["title"]: embed for embed in embeds}
+            for title, image in ((campaign["title"], campaign["image"]), (current["title"], current["image"])):
+                self.assertEqual(artwork[title]["thumbnail"]["url"], image)
+                self.assertEqual(artwork[title]["image"]["url"], image)
+
+    def test_source_status_has_labeled_brand_thumbnail_in_alert_overview_and_refresh(self):
+        error = {"source": "Eneba Minecoin search", "error": "public page HTTP 403; no offers inferred"}
+        data = snapshot(errors=[error])
+        alert = watcher.plan_events(data, watcher.empty_state())[0]["embed"]
+        overview = watcher.run_overview(data, dry_run=True)["messages"][0]["embeds"][0]
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "current.json"
+            watcher.export_retention_snapshot(data, NOW, path)
+            refreshed = json.loads(path.read_text(encoding="utf8"))["items"]["health:" + error["source"]]["embed"]
+        for embed in (alert, overview, refreshed):
+            self.assertEqual(embed["thumbnail"]["url"], watcher.AVATAR_URL)
+            self.assertEqual(embed["footer"]["text"], "Eneba watcher artwork")
+            self.assertNotIn("image", embed)
+            self.assertIn(error["source"], embed["description"])
+            self.assertIn(error["error"], embed["description"])
+        self.assertIn("monitoring failure", alert["fields"][0]["value"])
+        self.assertIn("not reused as current offers", overview["fields"][0]["value"])
+
+    def test_empty_requested_overview_has_brand_thumbnail_without_inventing_an_offer(self):
+        result = watcher.run_overview(snapshot(), dry_run=True)
+        self.assertEqual(len(result["messages"][0]["embeds"]), 1)
+        embed = result["messages"][0]["embeds"][0]
+        self.assertEqual(embed["thumbnail"]["url"], watcher.AVATAR_URL)
+        self.assertEqual(embed["footer"]["text"], "Eneba watcher artwork")
+        self.assertNotIn("image", embed)
+        self.assertNotIn("url", embed)
+        self.assertIn("no matching available", embed["description"])
+
+    def test_artwork_labels_count_toward_discord_batch_text_limit(self):
+        embed = watcher.status_artwork({"title": "Status", "description": "x" * 2980})
+        expected = len(embed["title"]) + len(embed["description"]) + len(embed["footer"]["text"])
+        self.assertEqual(watcher.embed_size(embed), expected)
+        self.assertGreater(2 * expected, 6000)
+        self.assertEqual(len(list(watcher.batches([{"embed": embed}, {"embed": embed}]))), 2)
+
     def test_baseline_is_identifiable_and_has_no_invented_sale(self):
         current = offer()
         events = watcher.plan_events(snapshot([current]), watcher.empty_state())

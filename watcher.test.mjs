@@ -70,6 +70,26 @@ test("official API metadata supplies missing cover, creator and full product URL
   assert.match(field(result.units[0].embed, "Available prices"), /Official web listing \(US\): \*\*310/);
 });
 
+test("missing product artwork uses a labeled watcher thumbnail in alerts and refreshes", async () => {
+  const data = { sales: [{ ...baseSale, items: [{ ...baseItem, images: [] }] }] };
+  const current = await plan(data, blank(), { metadata: async () => ({ ...official, image: null }) });
+  const embed = current.units[0].embed;
+  assert.equal(Object.hasOwn(embed, "image"), false);
+  assert.equal(embed.thumbnail.url, "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/alex-marketplace-v2-avatar.png");
+  assert.match(embed.footer.text, /Watcher artwork; product image unavailable/);
+  assert.equal(embed.title, "Skeleton Party");
+  assert.equal(embed.url, PRODUCT_URL);
+  assert.match(field(embed, "Available prices"), /Official web listing \(US\): \*\*310/);
+  assert.match(field(embed, "Price check"), /unverified/);
+  const refreshed = watcher.retentionSnapshot(current, NOW).items[ID].embed;
+  assert.deepEqual(refreshed.thumbnail, embed.thumbnail);
+  assert.equal(Object.hasOwn(refreshed, "image"), false);
+  assert.equal(refreshed.footer.text, embed.footer.text);
+  const genuine = (await plan()).units[0].embed;
+  assert.equal(genuine.image.url, IMAGE);
+  assert.equal(Object.hasOwn(genuine, "thumbnail"), false);
+});
+
 test("future, ended and invalid promotions never fetch metadata, notify or alter history", async () => {
   for (const [sale, now] of [
     [baseSale, Date.parse(START) - 1], [baseSale, Date.parse(END)],
