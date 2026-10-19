@@ -27,6 +27,7 @@ jobs:
       DISCORD_RETENTION_SNAPSHOT: .discord-current-minecraft.json
       RETENTION_ENABLED: "true"
       RETENTION_DAYS: "60"
+      DISCORD_ORIGINAL_WEBHOOK_ID: "1557461917742669976"
 
     steps:
       - name: Download my watcher
@@ -127,6 +128,7 @@ jobs:
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.retention_tests.outcome == 'success' && (steps.marketplace.outcome == 'success' || steps.marketplace.outcome == 'failure') }}
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_WEBHOOK_URL }}
+          DISCORD_LEGACY_WEBHOOK_URL: ${{ secrets.DISCORD_MINECRAFT_LEGACY_WEBHOOK_URL }}
         run: |
           if [ ! -f "$DISCORD_RETENTION_SNAPSHOT" ]; then
             echo "No fresh Marketplace snapshot; cleanup is deferred."

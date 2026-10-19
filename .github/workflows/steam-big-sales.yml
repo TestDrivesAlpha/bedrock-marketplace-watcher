@@ -28,6 +28,7 @@ jobs:
       DISCORD_RETENTION_SNAPSHOT: .discord-current-steam.json
       RETENTION_ENABLED: "true"
       RETENTION_DAYS: "60"
+      DISCORD_ORIGINAL_WEBHOOK_ID: "1557498149772333176"
 
     steps:
       - name: Download repository
@@ -60,6 +61,7 @@ jobs:
         if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.retention_tests.outcome == 'success' && (steps.sales.outcome == 'success' || steps.sales.outcome == 'failure') }}
         env:
           DISCORD_WEBHOOK_URL: ${{ secrets.DISCORD_STEAM_WEBHOOK_URL }}
+          DISCORD_LEGACY_WEBHOOK_URL: ${{ secrets.DISCORD_STEAM_LEGACY_WEBHOOK_URL }}
         run: |
           if [ ! -f "$DISCORD_RETENTION_SNAPSHOT" ]; then
             echo "No fresh Steam snapshot; cleanup is deferred."
