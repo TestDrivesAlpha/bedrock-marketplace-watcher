@@ -1,6 +1,8 @@
 {
   "messages": {
-    "1557503332027998319": {
+    "1561652638733443143": {
+      "archive_sha256": "a222202d29aac94353bffebc6bc7a19dc9158be1343c77b0bfb87f0192d8fe9e",
+      "archived_from": "1557503332027998319",
       "channel_id": "1557498100417953834",
       "created_at": "2026-10-07T21:22:11.368000Z",
       "items": [
@@ -9,9 +11,10 @@
           "scope": "steam-schedule"
         }
       ],
-      "message_id": "1557503332027998319",
+      "message_id": "1561652638733443143",
       "purpose": "alert",
-      "replacement_ids": []
+      "replacement_ids": [],
+      "webhook_id": "1561635443630411837"
     }
   },
   "version": 1
