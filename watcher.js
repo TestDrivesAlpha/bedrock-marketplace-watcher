@@ -36,10 +36,10 @@ const SNOWFLAKE = /^\d{15,22}$/;
 const RETENTION_SCOPE = "minecraft:catalog";
 
 export function validateDiscordAcknowledgement(value) {
-  if (!value || !SNOWFLAKE.test(String(value.id ?? "")) || !SNOWFLAKE.test(String(value.channel_id ?? ""))) {
+  if (!value || !SNOWFLAKE.test(String(value.id ?? "")) || !SNOWFLAKE.test(String(value.channel_id ?? "")) || !SNOWFLAKE.test(String(value.webhook_id ?? ""))) {
     throw new Error("Discord delivery did not return valid message and channel IDs; delivery remains pending.");
   }
-  return { id: String(value.id), channel_id: String(value.channel_id) };
+  return { id: String(value.id), channel_id: String(value.channel_id), webhook_id: String(value.webhook_id) };
 }
 
 export async function recordDiscordDelivery(file, acknowledgement, batch, now = Date.now()) {
@@ -50,7 +50,7 @@ export async function recordDiscordDelivery(file, acknowledgement, batch, now = 
   catch (error) { if (error.code !== "ENOENT") throw error; journal = { version: 1, messages: {} }; }
   if (journal.version !== 1 || !journal.messages || Array.isArray(journal.messages) || typeof journal.messages !== "object") throw new Error("Invalid Discord delivery journal.");
   journal.messages[ack.id] = {
-    message_id: ack.id, channel_id: ack.channel_id, created_at: new Date(now).toISOString(),
+    message_id: ack.id, channel_id: ack.channel_id, webhook_id: ack.webhook_id, created_at: new Date(now).toISOString(),
     items: batch.map((unit) => ({ key: unit.item.id, scope: RETENTION_SCOPE })),
     purpose: "alert", replacement_ids: [],
   };

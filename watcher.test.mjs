@@ -173,7 +173,7 @@ test("Discord 429 honors retry_after, requests acknowledgment and prevents unver
       seen.push(url);
       return seen.length === 1
         ? new Response(JSON.stringify({ retry_after: 0.5 }), { status: 429 })
-        : new Response(JSON.stringify({ id: "1561343633096052808", channel_id: "1557423972633808996" }), { status: 200 });
+        : new Response(JSON.stringify({ id: "1561343633096052808", channel_id: "1557423972633808996", webhook_id: "1557423972633808997" }), { status: 200 });
     },
   });
   assert.deepEqual(waits, [500]);
@@ -246,13 +246,14 @@ test("acknowledged Minecraft deliveries register durable cleanup IDs without cha
     let saved;
     await watcher.deliverNotifications(current, sourceState, {
       webhook: "https://discord.example/webhook", journalFile, now: NOW,
-      post: async () => ({ id: "1561343633096052808", channel_id: "1557423972633808996" }),
+      post: async () => ({ id: "1561343633096052808", channel_id: "1557423972633808996", webhook_id: "1557423972633808997" }),
       save: async (value) => { saved = structuredClone(value); },
     });
     const journal = JSON.parse(await fs.readFile(journalFile, "utf8"));
     const message = journal.messages["1561343633096052808"];
     assert.equal(message.created_at, new Date(NOW).toISOString());
     assert.equal(message.message_id, "1561343633096052808");
+    assert.equal(message.webhook_id, "1557423972633808997");
     assert.deepEqual(message.items, [{ key: ID, scope: "minecraft:catalog" }]);
     assert.deepEqual(message.replacement_ids, []);
     assert.equal((await plan(payload, saved)).units.length, 0);
@@ -267,6 +268,13 @@ test("a successful HTTP response without Discord IDs is not treated as acknowled
   await assert.rejects(watcher.postDiscord("https://discord.example/webhook", {}, {
     fetchFn: async () => new Response(JSON.stringify({ id: "not-a-discord-id" }), { status: 200 }),
   }), /valid message and channel/);
+});
+
+test("a new Minecraft delivery must include a numeric webhook origin", async () => {
+  for (const origin of [undefined, null, "invalid", "https://discord.com/api/webhooks/secret"]) {
+    const ack = { id: "1561343633096052808", channel_id: "1557423972633808996", webhook_id: origin };
+    assert.throws(() => watcher.validateDiscordAcknowledgement(ack), /valid message and channel IDs/);
+  }
 });
 
 test("corrupt history fails instead of silently resending every promotion", async () => {

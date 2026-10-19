@@ -123,10 +123,12 @@ def send_discord(webhook, payload):
         with urlopen(request, timeout=30) as response:
             acknowledgment = json.loads(response.read(1_000_000))
             if response.status != 200 or not isinstance(acknowledgment, dict) or not all(
-                    str(acknowledgment.get(key, "")).isdigit() for key in ("id", "channel_id")):
+                    str(acknowledgment.get(key, "")).isascii() and str(acknowledgment.get(key, "")).isdigit()
+                    for key in ("id", "channel_id", "webhook_id")):
                 raise RuntimeError("Discord did not return a valid message acknowledgement.")
             return {"message_id": str(acknowledgment["id"]),
-                    "channel_id": str(acknowledgment["channel_id"])}
+                    "channel_id": str(acknowledgment["channel_id"]),
+                    "webhook_id": str(acknowledgment["webhook_id"])}
     except HTTPError as error:
         raise RuntimeError(f"Discord webhook failed (HTTP {error.code}).") from None
     except (URLError, TimeoutError, ValueError):

@@ -98,10 +98,14 @@ def load_journal(path):
         raise RetentionError("Delivery journal could not be read; no cleanup was performed.") from None
     if not isinstance(journal, dict) or journal.get("version") != VERSION or not isinstance(journal.get("messages"), dict):
         raise RetentionError("Unsupported delivery journal; no cleanup was performed.")
+    if "legacy_webhook_id" in journal:
+        _id(journal["legacy_webhook_id"])
     for message_id, message in journal["messages"].items():
         if not isinstance(message, dict) or _id(message_id) != _id(message.get("message_id")):
             raise RetentionError("Invalid delivery journal message.")
         _id(message.get("channel_id"))
+        if "webhook_id" in message:
+            _id(message["webhook_id"])
         _time(message.get("created_at"))
         if message.get("purpose") not in ("alert", "overview"):
             raise RetentionError("Non-alert entries cannot be managed by retention.")
@@ -117,17 +121,24 @@ def record_message(journal_path, acknowledgement, items, now=None, purpose="aler
         raise RetentionError("Discord acknowledgement is missing.")
     message_id = _id(acknowledgement.get("message_id", acknowledgement.get("id")))
     channel_id = _id(acknowledgement.get("channel_id"))
+    webhook_id = _id(acknowledgement["webhook_id"]) if "webhook_id" in acknowledgement else None
     journal = load_journal(journal_path)
     if message_id in journal["messages"]:
         old = journal["messages"][message_id]
-        if old["channel_id"] != channel_id or old["items"] != _items(items):
+        if (old["channel_id"] != channel_id or old["items"] != _items(items)
+                or (webhook_id and old.get("webhook_id") not in (None, webhook_id))):
             raise RetentionError("Acknowledgement conflicts with an existing delivery record.")
+        if webhook_id and "webhook_id" not in old:
+            old["webhook_id"] = webhook_id
+            _atomic_json(journal_path, journal)
         return message_id
     journal["messages"][message_id] = {
         "message_id": message_id, "channel_id": channel_id,
         "created_at": _iso(now), "purpose": purpose,
         "items": _items(items), "replacement_ids": [],
     }
+    if webhook_id:
+        journal["messages"][message_id]["webhook_id"] = webhook_id
     _atomic_json(journal_path, journal)
     return message_id
 
@@ -258,23 +269,29 @@ def _covered_elsewhere(journal, old, key, scope, visible):
         and candidate["channel_id"] == old["channel_id"]
         and (_time(candidate["created_at"]) > old_time or candidate["message_id"] in replacements)
         and any(item["key"] == key and item["scope"] == scope for item in candidate["items"])
-        and visible(candidate["message_id"])
+        and visible(candidate)
         for candidate in journal["messages"].values()
     )
 
 
-def _ack(value, expected_channel, expected_message=None, webhook_id=None):
+def _ack(value, expected_channel, expected_message=None, webhook_id=None, require_origin=False):
     if not isinstance(value, dict):
         raise RetentionError("Discord acknowledgement is missing.")
     message_id, channel_id = _id(value.get("id", value.get("message_id"))), _id(value.get("channel_id"))
     if channel_id != expected_channel or (expected_message and message_id != expected_message):
         raise RetentionError("Discord message identity or channel does not match the delivery journal.")
-    if webhook_id and value.get("webhook_id") is not None and _id(value["webhook_id"]) != webhook_id:
+    if require_origin and value.get("webhook_id") is None:
+        raise RetentionError("Discord message origin is missing; the recorded alert was left intact.")
+    origin = _id(value["webhook_id"]) if value.get("webhook_id") is not None else None
+    if webhook_id and origin is not None and origin != webhook_id:
         raise RetentionError("Discord message belongs to a different webhook.")
-    return {"message_id": message_id, "channel_id": channel_id}
+    result = {"message_id": message_id, "channel_id": channel_id}
+    if origin:
+        result["webhook_id"] = origin
+    return result
 
 
-def run_retention(destination, journal_path, snapshot_path, webhook_url=None, dry_run=False, now=None, request=None):
+def run_retention(destination, journal_path, snapshot_path, webhook_url=None, dry_run=False, now=None, request=None, legacy_webhook_url=None):
     """Refresh/delete aged acknowledged alerts; return safe counters and diagnostics.
 
     Source errors leave the original post and journal intact. Replacement ACKs are
@@ -310,21 +327,58 @@ def run_retention(destination, journal_path, snapshot_path, webhook_url=None, dr
         if (status != 200 or not isinstance(identity, dict) or _id(identity.get("id")) != webhook_id):
             raise RetentionError("Discord webhook identity could not be verified.")
         channel_id = _id(identity.get("channel_id"))
+        routes = {webhook_id: base}
+        verified = {webhook_id}
+        legacy_value = legacy_webhook_url or os.environ.get("DISCORD_LEGACY_WEBHOOK_URL")
+        legacy_id = journal.get("legacy_webhook_id")
+        original_value = os.environ.get("DISCORD_ORIGINAL_WEBHOOK_ID", "").strip()
+        original_id = _id(original_value) if original_value else None
+        if legacy_value:
+            legacy_base, supplied_legacy_id = _webhook(legacy_value)
+            if supplied_legacy_id == webhook_id and supplied_legacy_id != original_id:
+                raise RetentionError("Replacement and legacy webhooks must have different identities.")
+            if legacy_id and legacy_id != supplied_legacy_id:
+                raise RetentionError("Legacy webhook differs from the recorded migration origin; cleanup was deferred.")
+            if original_id and supplied_legacy_id != original_id:
+                raise RetentionError("Legacy webhook differs from the configured original identity; cleanup was deferred.")
+            legacy_id = supplied_legacy_id
+            routes[legacy_id] = legacy_base
+        strict_origin = destination in ("steam", "minecraft")
     except (RetentionError, ValueError, OverflowError) as error:
         summary["errors"].append(str(error) if isinstance(error, RetentionError) else "Invalid retention configuration.")
         return summary
 
+    def origin_for(record):
+        origin = record.get("webhook_id") or legacy_id or original_id
+        if not origin:
+            if strict_origin:
+                raise RetentionError("An older alert has no recorded origin; its legacy webhook credential is required.")
+            origin = webhook_id  # Existing single-webhook Eneba/Pokemon journals remain compatible.
+        if origin not in routes:
+            raise RetentionError("The credential for a recorded alert's webhook is unavailable; that alert was left intact.")
+        if record["channel_id"] != channel_id:
+            raise RetentionError("Webhook channel differs from a recorded alert; that alert was left intact.")
+        if origin not in verified:
+            status, found = send("GET", routes[origin])
+            if (status != 200 or not isinstance(found, dict)
+                    or _id(found.get("id")) != origin or _id(found.get("channel_id")) != channel_id):
+                raise RetentionError("Legacy webhook identity or channel could not be verified; old alerts were left intact.")
+            verified.add(origin)
+            if journal.get("legacy_webhook_id") is None:
+                journal["legacy_webhook_id"] = origin
+                _atomic_json(journal_path, journal)
+        return routes[origin], origin
+
     for old in sorted(aged, key=lambda value: (_time(value["created_at"]), int(value["message_id"]))):
         try:
             message_id = old["message_id"]
-            if old["channel_id"] != channel_id:
-                raise RetentionError("Webhook channel differs from a recorded alert; that alert was left intact.")
-            status, message = send("GET", base + "/messages/" + message_id)
+            old_base, old_origin = origin_for(old)
+            status, message = send("GET", old_base + "/messages/" + message_id)
             missing = status == 404
             if not missing:
                 if status != 200:
                     raise RetentionError("An old Discord alert could not be checked; cleanup will retry.")
-                _ack(message, channel_id, message_id, webhook_id)
+                _ack(message, channel_id, message_id, old_origin, require_origin=strict_origin or "webhook_id" in old)
                 if message.get("pinned") is not False:
                     # Missing pin metadata is treated as unknown, never assumed unpinned.
                     summary["pinned"] += 1
@@ -333,13 +387,15 @@ def run_retention(destination, journal_path, snapshot_path, webhook_url=None, dr
                 summary["deferred"] += 1
                 continue
             active = []
-            def visible(candidate_id):
-                status, candidate = send("GET", base + "/messages/" + candidate_id)
+            def visible(record):
+                candidate_id = record["message_id"]
+                candidate_base, candidate_origin = origin_for(record)
+                status, candidate = send("GET", candidate_base + "/messages/" + candidate_id)
                 if status == 404:
                     return False
                 if status != 200:
                     raise RetentionError("A newer alert could not be checked; the original was kept for retry.")
-                _ack(candidate, channel_id, candidate_id, webhook_id)
+                _ack(candidate, channel_id, candidate_id, candidate_origin, require_origin=strict_origin or "webhook_id" in record)
                 return True
             for item in old["items"]:
                 observed = snapshot["items"].get(item["key"])
@@ -363,7 +419,8 @@ def run_retention(destination, journal_path, snapshot_path, webhook_url=None, dr
                 status, acknowledgement = send("POST", base + "?wait=true", payload)
                 if status != 200:
                     raise RetentionError("A refresh was not acknowledged; the original alert was kept.")
-                ack = _ack(acknowledgement, channel_id, webhook_id=webhook_id)
+                ack = _ack(acknowledgement, channel_id, webhook_id=webhook_id, require_origin=strict_origin)
+                ack["webhook_id"] = webhook_id
                 if ack["message_id"] in journal["messages"]:
                     raise RetentionError("Discord returned an already recorded refresh ID.")
                 journal["messages"][ack["message_id"]] = {
@@ -375,7 +432,7 @@ def run_retention(destination, journal_path, snapshot_path, webhook_url=None, dr
                 _atomic_json(journal_path, journal)
                 summary["refreshed"] += 1
             if not missing:
-                status, _ = send("DELETE", base + "/messages/" + message_id)
+                status, _ = send("DELETE", old_base + "/messages/" + message_id)
                 if status not in (204, 404):
                     raise RetentionError("The replacement is saved; deleting the old alert will retry without reposting.")
                 if status == 204:

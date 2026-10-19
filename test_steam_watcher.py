@@ -105,9 +105,10 @@ class SteamWatcherTests(unittest.TestCase):
 
     def test_retention_records_ack_without_resetting_normal_history(self):
         journal = Path(self.directory.name) / "posts.json"
-        self.post.return_value = {"message_id": "123", "channel_id": "456"}
+        self.post.return_value = {"message_id": "123", "channel_id": "456", "webhook_id": "789"}
         self.assertEqual(self.run_check(journal_path=journal), 1)
         record = json.loads(journal.read_text(encoding='utf-8'))["messages"]["123"]
+        self.assertEqual(record["webhook_id"], "789")
         self.assertEqual(record["items"], [{"key": self.sale["id"], "scope": "steam-schedule"}])
         self.assertIn(self.sale["id"], self.state.read_text(encoding='utf-8'))
         self.assertEqual(self.run_check(journal_path=journal), 0)
@@ -157,12 +158,12 @@ class SteamWatcherTests(unittest.TestCase):
                 return self
             def __exit__(self, *args):
                 self.close()
-        with patch.object(watcher, "urlopen", return_value=Response(b'{"id":"123","channel_id":"456","token":"secret"}')) as opened:
+        with patch.object(watcher, "urlopen", return_value=Response(b'{"id":"123","channel_id":"456","webhook_id":"789","token":"secret"}')) as opened:
             self.assertEqual(watcher.send_discord("https://discord.example/hook?wait=false&thread_id=9", {}),
-                             {"message_id": "123", "channel_id": "456"})
+                             {"message_id": "123", "channel_id": "456", "webhook_id": "789"})
         self.assertIn("wait=true", opened.call_args.args[0].full_url)
         self.assertIn("thread_id=9", opened.call_args.args[0].full_url)
-        for body in (b'{}', b'{"id":"invalid","channel_id":"456"}', b'[]', b'invalid JSON'):
+        for body in (b'{}', b'{"id":"invalid","channel_id":"456"}', b'{"id":"123","channel_id":"456"}', b'{"id":"123","channel_id":"456","webhook_id":"invalid"}', b'[]', b'invalid JSON'):
             with self.subTest(body=body), patch.object(watcher, "urlopen", return_value=Response(body)):
                 with self.assertRaises(RuntimeError):
                     watcher.send_discord("https://discord.example/hook", {})

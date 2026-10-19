@@ -383,5 +383,287 @@ class DiscordRetentionTests(unittest.TestCase):
         self.assertTrue(result["errors"])
 
 
+class OriginDiscord:
+    """Discord's webhook-message endpoints cannot see a different origin's posts."""
+    def __init__(self):
+        self.calls = []
+        self.identities = {"700": {"id": "700", "channel_id": "900"}, "701": {"id": "701", "channel_id": "900"}}
+        self.messages = {"700": {"101": {"id": "101", "channel_id": "900", "webhook_id": "700", "pinned": False}}, "701": {}}
+        self.identity_status = {}
+        self.delete_failures = 0
+        self.next_id = 201
+        self.posts = 0
+        self.post_changes = {}
+
+    def __call__(self, method, url, payload=None):
+        self.calls.append((method, url, copy.deepcopy(payload)))
+        origin = url.split('/webhooks/', 1)[1].split('/', 1)[0]
+        if method == 'GET' and '/messages/' not in url:
+            return self.identity_status.get(origin, 200), copy.deepcopy(self.identities[origin])
+        message_id = url.rsplit('/', 1)[-1]
+        if method == 'GET':
+            value = self.messages[origin].get(message_id)
+            return (200, copy.deepcopy(value)) if value else (404, None)
+        if method == 'POST':
+            self.posts += 1
+            ack = {'id': str(self.next_id), 'channel_id': '900', 'webhook_id': origin, 'pinned': False}
+            self.next_id += 1
+            self.messages[origin][ack['id']] = copy.deepcopy(ack)
+            ack.update(self.post_changes)
+            return 200, ack
+        if method == 'DELETE':
+            if self.delete_failures:
+                self.delete_failures -= 1
+                return 500, None
+            return (204, self.messages[origin].pop(message_id)) if message_id in self.messages[origin] else (404, None)
+        raise AssertionError(method)
+
+
+class WebhookMigrationTests(unittest.TestCase):
+    CURRENT = 'https://discord.com/api/webhooks/701/CURRENT_SECRET'
+    LEGACY = 'https://discord.com/api/webhooks/700/LEGACY_SECRET'
+
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.journal = Path(self.temp.name) / 'journal.json'
+        self.snapshot = Path(self.temp.name) / 'snapshot.json'
+        self.now = datetime(2027, 1, 1, 12, tzinfo=timezone.utc)
+        self.old = self.now - timedelta(days=65)
+        self.fake = OriginDiscord()
+        self.env = patch.dict(os.environ, {'RETENTION_ENABLED': 'true', 'RETENTION_DAYS': '60', 'DISCORD_LEGACY_WEBHOOK_URL': '', 'DISCORD_ORIGINAL_WEBHOOK_ID': ''})
+        self.env.start()
+        self.addCleanup(self.env.stop)
+        self.register('101', when=self.old)
+        self.source = {'version': 1, 'destination': 'steam', 'observed_at': retention._iso(self.now),
+            'identity': {'content': 'Current sale status'}, 'coverage': {'offers': True},
+            'items': {'sale': {'scope': 'offers', 'embed': {'title': 'Sale', 'url': 'https://store.steampowered.com/specials/', 'description': 'Current sale'}}}}
+        retention.write_snapshot(self.snapshot, self.source)
+
+    def register(self, message_id, origin=None, when=None):
+        ack = {'id': message_id, 'channel_id': '900'}
+        if origin is not None:
+            ack['webhook_id'] = origin
+        retention.record_message(self.journal, ack, [{'key': 'sale', 'scope': 'offers'}], now=when or self.now)
+
+    def read(self):
+        return json.loads(self.journal.read_text(encoding='utf-8'))
+
+    def run_check(self, legacy=LEGACY, **kwargs):
+        return retention.run_retention('steam', self.journal, self.snapshot, webhook_url=self.CURRENT,
+            legacy_webhook_url=legacy, now=self.now, request=self.fake, **kwargs)
+
+    def mutations(self):
+        return [call for call in self.fake.calls if call[0] in ('POST', 'DELETE')]
+
+    def assert_no_message_requests(self):
+        self.assertFalse(any('/messages/' in call[1] for call in self.fake.calls))
+        self.assertEqual(self.mutations(), [])
+
+    def test_legacy_old_message_refreshes_through_new_origin_and_deletes_through_legacy(self):
+        result = self.run_check()
+        self.assertEqual(result['errors'], [])
+        self.assertEqual([call[0] for call in self.mutations()], ['POST', 'DELETE'])
+        self.assertTrue(self.mutations()[0][1].startswith(self.CURRENT))
+        self.assertTrue(self.mutations()[1][1].startswith(self.LEGACY))
+        self.assertEqual(self.read()['messages']['201']['webhook_id'], '701')
+        self.assertEqual(self.read()['legacy_webhook_id'], '700')
+        self.assertEqual(self.read()['version'], 1)
+        self.assertNotIn('avatar_url', self.mutations()[0][2])
+        self.assertNotIn('username', self.mutations()[0][2])
+
+    def test_failed_legacy_delete_retries_without_reposting_new_origin(self):
+        self.fake.delete_failures = 1
+        first = self.run_check()
+        self.assertEqual(first['refreshed'], 1)
+        self.assertTrue(first['errors'])
+        self.assertEqual(self.read()['messages']['101']['replacement_ids'], ['201'])
+        second = self.run_check()
+        self.assertEqual(second['refreshed'], 0)
+        self.assertEqual(second['deleted'], 1)
+        self.assertEqual(self.fake.posts, 1)
+        self.assertTrue(any('/701/' in url and url.endswith('/messages/201') for method, url, _ in self.fake.calls if method == 'GET'))
+
+    def test_pinned_legacy_message_is_preserved(self):
+        self.fake.messages['700']['101']['pinned'] = True
+        self.assertEqual(self.run_check()['pinned'], 1)
+        self.assertEqual(self.mutations(), [])
+        self.assertIn('101', self.read()['messages'])
+
+    def test_missing_legacy_for_untagged_steam_alert_never_tries_current_message_endpoint(self):
+        before = self.journal.read_bytes()
+        self.assertTrue(self.run_check(legacy=None)['errors'])
+        self.assert_no_message_requests()
+        self.assertEqual(self.journal.read_bytes(), before)
+
+    def test_configured_original_identity_preserves_cleanup_before_secret_replacement(self):
+        with patch.dict(os.environ, {'DISCORD_ORIGINAL_WEBHOOK_ID': '700'}):
+            result = retention.run_retention('steam', self.journal, self.snapshot,
+                webhook_url=self.LEGACY, now=self.now, request=self.fake)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['refreshed'], 1)
+        self.assertEqual(result['deleted'], 1)
+        self.assertTrue(all(url.startswith(self.LEGACY) for _, url, _ in self.fake.calls))
+
+    def test_original_identity_without_legacy_secret_cannot_use_replacement_for_old_message(self):
+        with patch.dict(os.environ, {'DISCORD_ORIGINAL_WEBHOOK_ID': '700'}):
+            self.assertTrue(self.run_check(legacy=None)['errors'])
+        self.assert_no_message_requests()
+
+    def test_original_credential_backup_is_harmless_before_primary_secret_changes(self):
+        self.fake.messages['700']['101']['pinned'] = True
+        with patch.dict(os.environ, {'DISCORD_ORIGINAL_WEBHOOK_ID': '700'}):
+            result = retention.run_retention('steam', self.journal, self.snapshot,
+                webhook_url=self.LEGACY, legacy_webhook_url=self.LEGACY,
+                now=self.now, request=self.fake)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['pinned'], 1)
+        self.assertEqual(self.mutations(), [])
+
+    def test_malformed_original_identity_or_conflicting_legacy_fails_closed(self):
+        for original in ('malformed', '702'):
+            with self.subTest(original=original), patch.dict(os.environ, {'DISCORD_ORIGINAL_WEBHOOK_ID': original}):
+                self.assertTrue(self.run_check()['errors'])
+                self.assert_no_message_requests()
+
+    def test_missing_legacy_for_explicit_origin_fails_closed(self):
+        self.register('101', origin='700', when=self.old)
+        self.assertTrue(self.run_check(legacy=None)['errors'])
+        self.assert_no_message_requests()
+
+    def test_durable_migration_marker_requires_legacy_if_secret_later_missing(self):
+        self.fake.messages['700']['101']['pinned'] = True
+        self.assertEqual(self.run_check()['pinned'], 1)
+        self.assertEqual(self.read()['legacy_webhook_id'], '700')
+        self.fake.calls.clear()
+        self.assertTrue(self.run_check(legacy=None)['errors'])
+        self.assert_no_message_requests()
+
+    def test_legacy_channel_or_identity_mismatch_blocks_old_message_requests(self):
+        for field, value in [('id', '799'), ('channel_id', '999')]:
+            with self.subTest(field=field):
+                self.fake = OriginDiscord()
+                self.fake.identities['700'][field] = value
+                self.assertTrue(self.run_check()['errors'])
+                self.assert_no_message_requests()
+
+    def test_unavailable_legacy_identity_never_treats_old_message_as_missing(self):
+        for status in (401, 403, 404, 429, 500):
+            with self.subTest(status=status):
+                self.fake = OriginDiscord()
+                self.fake.identity_status['700'] = status
+                self.assertTrue(self.run_check()['errors'])
+                self.assert_no_message_requests()
+                self.assertIn('101', self.read()['messages'])
+
+    def test_unknown_third_origin_cannot_fall_back_to_any_supplied_url(self):
+        self.register('101', origin='799', when=self.old)
+        self.assertTrue(self.run_check()['errors'])
+        self.assert_no_message_requests()
+
+    def test_old_message_origin_and_channel_must_match_its_resolved_credential(self):
+        for field, value in [('webhook_id', '701'), ('webhook_id', None), ('channel_id', '999')]:
+            with self.subTest(field=field, value=value):
+                self.fake = OriginDiscord()
+                self.fake.messages['700']['101'][field] = value
+                self.assertTrue(self.run_check()['errors'])
+                self.assertEqual(self.mutations(), [])
+                self.assertIn('101', self.read()['messages'])
+
+    def test_new_post_ack_must_identify_current_origin_before_old_deletion(self):
+        for value in ('700', None, 'invalid'):
+            with self.subTest(value=value):
+                self.fake = OriginDiscord()
+                self.fake.post_changes['webhook_id'] = value
+                self.assertTrue(self.run_check()['errors'])
+                self.assertFalse(any(call[0] == 'DELETE' for call in self.fake.calls))
+                self.assertEqual(set(self.read()['messages']), {'101'})
+
+    def test_current_candidate_covers_legacy_old_message_via_its_own_origin(self):
+        self.register('102', origin='701')
+        self.fake.messages['701']['102'] = {'id': '102', 'channel_id': '900', 'webhook_id': '701', 'pinned': False}
+        result = self.run_check()
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['refreshed'], 0)
+        self.assertEqual(result['deleted'], 1)
+        self.assertTrue(any(url.startswith(self.CURRENT) and url.endswith('/messages/102') for method, url, _ in self.fake.calls if method == 'GET'))
+
+    def test_legacy_candidate_covers_current_old_message_via_legacy_origin(self):
+        self.register('101', origin='701', when=self.old)
+        self.fake.messages['701']['101'] = self.fake.messages['700'].pop('101')
+        self.fake.messages['701']['101']['webhook_id'] = '701'
+        self.register('102', origin='700')
+        self.fake.messages['700']['102'] = {'id': '102', 'channel_id': '900', 'webhook_id': '700', 'pinned': False}
+        result = self.run_check()
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['refreshed'], 0)
+        self.assertTrue(self.mutations()[0][1].startswith(self.CURRENT))
+        self.assertTrue(any(url.startswith(self.LEGACY) and url.endswith('/messages/102') for method, url, _ in self.fake.calls if method == 'GET'))
+
+    def test_404_through_correct_legacy_origin_refreshes_active_offer_once(self):
+        self.fake.messages['700'].clear()
+        first = self.run_check()
+        self.assertEqual(first['refreshed'], 1)
+        self.assertEqual(first['retired'], 1)
+        self.assertEqual(first['deleted'], 0)
+        self.assertEqual(self.run_check()['eligible'], 0)
+        self.assertEqual(self.fake.posts, 1)
+
+    def test_404_through_correct_legacy_origin_can_retire_ended_offer(self):
+        self.fake.messages['700'].clear()
+        self.source['items'] = {}
+        retention.write_snapshot(self.snapshot, self.source)
+        self.assertEqual(self.run_check()['retired'], 1)
+        self.assertEqual(self.mutations(), [])
+
+    def test_dry_run_does_not_write_migration_marker_or_contact_discord(self):
+        before = self.journal.read_bytes()
+        self.assertEqual(self.run_check(dry_run=True)['eligible'], 1)
+        self.assertEqual(self.fake.calls, [])
+        self.assertEqual(self.journal.read_bytes(), before)
+
+    def test_new_origin_registration_is_numeric_and_cannot_conflict(self):
+        self.register('102', origin='701')
+        self.assertEqual(self.read()['messages']['102']['webhook_id'], '701')
+        before = self.journal.read_bytes()
+        for origin in ('700', 'not-an-id'):
+            with self.assertRaises(retention.RetentionError):
+                self.register('102', origin=origin)
+        self.assertEqual(self.journal.read_bytes(), before)
+
+    def test_corrupt_or_conflicting_legacy_marker_is_not_overwritten(self):
+        for marker in ('invalid', '799'):
+            with self.subTest(marker=marker):
+                value = self.read()
+                value['legacy_webhook_id'] = marker
+                self.journal.write_text(json.dumps(value), encoding='utf-8')
+                before = self.journal.read_bytes()
+                self.fake.calls.clear()
+                self.assertTrue(self.run_check()['errors'])
+                self.assertEqual(self.journal.read_bytes(), before)
+                self.assertEqual(self.mutations(), [])
+
+    def test_same_current_and_legacy_id_is_rejected_without_message_requests(self):
+        self.assertTrue(self.run_check(legacy=self.CURRENT)['errors'])
+        self.assert_no_message_requests()
+
+    def test_tagged_current_post_can_be_checked_without_legacy_credentials(self):
+        self.register('101', origin='701', when=self.old)
+        self.fake.messages['701']['101'] = self.fake.messages['700'].pop('101')
+        self.fake.messages['701']['101']['webhook_id'] = '701'
+        result = self.run_check(legacy=None)
+        self.assertEqual(result['errors'], [])
+        self.assertEqual(result['deleted'], 1)
+        self.assertEqual(self.read()['messages']['201']['webhook_id'], '701')
+
+    def test_summary_and_journal_never_contain_webhook_urls_or_tokens(self):
+        self.fake.identity_status['700'] = 403
+        result = self.run_check()
+        output = json.dumps(result) + self.journal.read_text(encoding='utf-8')
+        for private in (self.CURRENT, self.LEGACY, 'CURRENT_SECRET', 'LEGACY_SECRET'):
+            self.assertNotIn(private, output)
+        self.assertTrue(result['errors'])
+
+
 if __name__ == "__main__":
     unittest.main()
