@@ -54,7 +54,8 @@ class SteamWatcherTests(unittest.TestCase):
         self.assertEqual(embed["image"]["url"], watcher.STEAM_LOGO)
         self.assertEqual(embed["url"], "https://store.steampowered.com/specials/")
         self.assertEqual(payload["allowed_mentions"], {"parse": []})
-        self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
+        self.assertNotIn("username", payload)
+        self.assertNotIn("avatar_url", payload)
         self.assertIn("autumn-2026", self.state.read_text(encoding='utf-8'))
         self.assertIn("winter-2026", self.state.read_text(encoding='utf-8'))
 
@@ -82,7 +83,8 @@ class SteamWatcherTests(unittest.TestCase):
         self.assertEqual(watcher.event_image(self.sale, html),
                          ("https://cdn.akamai.steamstatic.com/sale.jpg", True))
         payload = watcher.build_payload(self.sale, html)
-        self.assertEqual(payload["avatar_url"], watcher.AVATAR_URL)
+        self.assertNotIn("username", payload)
+        self.assertNotIn("avatar_url", payload)
         self.assertEqual(payload["embeds"][0]["image"]["url"], "https://cdn.akamai.steamstatic.com/sale.jpg")
 
     def test_wrong_event_or_untrusted_image_falls_back_to_logo(self):
@@ -122,6 +124,20 @@ class SteamWatcherTests(unittest.TestCase):
         ended = json.loads(snapshot.read_text(encoding='utf-8'))
         self.assertNotIn(self.sale["id"], ended["items"])
         self.assertTrue(ended["coverage"]["steam-schedule"])
+        self.post.assert_not_called()
+
+    def test_retention_refresh_uses_saved_webhook_profile_and_keeps_official_artwork(self):
+        snapshot = Path(self.directory.name) / "current.json"
+        self.fetch.return_value = '''<meta property="og:title" content="Steam Winter Sale 2026">
+            <meta property="og:image" content="https://cdn.akamai.steamstatic.com/sale.jpg">'''
+        self.run_check(dry_run=True, snapshot_path=snapshot)
+        current = json.loads(snapshot.read_text(encoding="utf-8"))
+        self.assertEqual(current["identity"], {
+            "content": "Steam seasonal sale status — refreshed after 60 days",
+        })
+        embed = current["items"][self.sale["id"]]["embed"]
+        self.assertEqual(embed["image"]["url"], "https://cdn.akamai.steamstatic.com/sale.jpg")
+        self.assertEqual(embed["url"], watcher.STORE_URL)
         self.post.assert_not_called()
 
     def test_retention_dry_run_only_exports_ephemeral_snapshot(self):

@@ -15,7 +15,6 @@ STORE_URL = "https://store.steampowered.com/specials/"
 HOME_URL = "https://store.steampowered.com/?l=english"
 STEAM_LOGO = "https://store.fastly.steamstatic.com/public/shared/images/responsive/share_steam_logo.png"
 SCHEDULE_SOURCE = "https://partner.steamgames.com/doc/marketing/upcoming_events"
-AVATAR_URL = "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/steam-catgirl-glam-avatar.png"
 
 # Existing event IDs and dates are retained. Valve's official schedule was
 # checked on 2026-10-17; the original 10 AM Pacific start/end times are retained.
@@ -90,9 +89,7 @@ def build_payload(sale, html=""):
     end = int(datetime.fromisoformat(sale["end"]).timestamp())
     image_url, event_artwork = event_image(sale, html)
     return {
-        "username": "Steam Sale Watcher",
         "content": "A major Steam seasonal sale is live!",
-        "avatar_url": AVATAR_URL,
         "allowed_mentions": {"parse": []},
         "embeds": [{
             "title": sale["name"],
@@ -166,8 +163,7 @@ def check_sales(now, state_file, *, dry_run=False, webhook=None,
             embed["description"] = "**Still available — refreshed after 60 days**\n" + embed["description"]
             items[sale["id"]] = {"scope": "steam-schedule", "embed": embed, "ends_at": sale["end"]}
         write_snapshot(snapshot_path, {"version": 1, "destination": "steam", "observed_at": now.isoformat(),
-            "identity": {"username": "Steam Sale Watcher", "avatar_url": AVATAR_URL,
-                         "content": "Steam seasonal sale status — refreshed after 60 days"},
+            "identity": {"content": "Steam seasonal sale status — refreshed after 60 days"},
             "coverage": {"steam-schedule": True}, "items": items})
     count = 0
     for sale in sales:

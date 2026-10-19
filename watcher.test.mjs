@@ -125,8 +125,8 @@ test("all items fit Discord limits and only acknowledged batches are checkpointe
   for (const batch of batches) {
     assert.ok(batch.length <= 10);
     const message = watcher.discordPayload(batch);
-    assert.equal(message.username, "Bedrock Sale Watcher");
-    assert.equal(message.avatar_url, "https://raw.githubusercontent.com/TestDrivesAlpha/bedrock-marketplace-watcher/main/assets/alex-marketplace-avatar.png");
+    assert.equal(Object.hasOwn(message, "username"), false);
+    assert.equal(Object.hasOwn(message, "avatar_url"), false);
     const embeds = message.embeds;
     const size = embeds.reduce((sum, embed) => sum + embed.title.length + embed.description.length + embed.footer.text.length + embed.fields.reduce((n, f) => n + f.name.length + f.value.length, 0), 0);
     assert.ok(size <= 6000);
@@ -222,6 +222,21 @@ test("retention snapshot rechecks announced products, preserves price warnings a
   assert.equal(Object.keys(watcher.retentionSnapshot(await plan(null), NOW).items).length, 0);
   const malformed = await plan({ sales: [{ ...baseSale, endDate: "unknown" }] });
   assert.equal(watcher.retentionSnapshot(malformed, NOW).coverage["minecraft:catalog"], false);
+});
+
+test("normal alerts and retention refreshes use the saved webhook profile while keeping product artwork", async () => {
+  const current = await plan();
+  const message = watcher.discordPayload(current.units);
+  assert.equal(Object.hasOwn(message, "username"), false);
+  assert.equal(Object.hasOwn(message, "avatar_url"), false);
+  assert.equal(message.embeds[0].image.url, IMAGE);
+  assert.equal(message.embeds[0].url, PRODUCT_URL);
+  const snapshot = watcher.retentionSnapshot(current, NOW);
+  assert.deepEqual(snapshot.identity, {
+    content: "Current Minecraft Marketplace promotions. Check each item's price verification and dates.",
+  });
+  assert.equal(snapshot.items[ID].embed.image.url, IMAGE);
+  assert.equal(snapshot.items[ID].embed.url, PRODUCT_URL);
 });
 
 test("acknowledged Minecraft deliveries register durable cleanup IDs without changing historical deduplication", async () => {
