@@ -59,7 +59,7 @@ class DiscordRetentionTests(unittest.TestCase):
             "coverage": {"offers": True},
             "items": {"coin": {"scope": "offers", "embed": {"title": "Minecoins", "url": "https://example.com/coin", "description": "EUR 3.10"}}},
         }
-        self.env = patch.dict(os.environ, {"RETENTION_ENABLED": "true", "RETENTION_DAYS": "60", "RETENTION_SNAPSHOT_MAX_HOURS": "6"})
+        self.env = patch.dict(os.environ, {"RETENTION_ENABLED": "true", "RETENTION_DAYS": "60", "RETENTION_SNAPSHOT_MAX_HOURS": "6", "DISCORD_LEGACY_WEBHOOK_URL": "", "DISCORD_ORIGINAL_WEBHOOK_ID": ""})
         self.env.start()
         self.addCleanup(self.env.stop)
         self.register()
