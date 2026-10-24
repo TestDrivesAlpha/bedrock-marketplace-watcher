@@ -5,43 +5,43 @@
       "price_minor": 249,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-10-24T06:26:04.539230+00:00"
+      "at": "2026-10-24T11:35:20.694481+00:00"
     },
     "xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global|EUR|US": {
-      "price_minor": 583,
+      "price_minor": 611,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-10-24T06:26:04.539230+00:00"
+      "at": "2026-10-24T11:35:20.694481+00:00"
     },
     "xbox-minecraft-minecoins-pack-3500-coins-xbox-one-xbox-live-key-global|EUR|US": {
       "price_minor": 1138,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-10-24T06:26:04.539230+00:00"
+      "at": "2026-10-24T11:35:20.694481+00:00"
     },
     "xbox-minecraft-minecoins-pack-8800-coins-key-global|EUR|US": {
       "price_minor": 4072,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-10-24T06:26:04.539230+00:00"
+      "at": "2026-10-24T11:35:20.694481+00:00"
     },
     "xbox-minecraft-minecoins-pack-330-coins-key-global|EUR|US": {
       "price_minor": 238,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-10-24T01:07:27.169682+00:00"
+      "at": "2026-10-24T11:35:20.694481+00:00"
     },
     "xbox-minecraft-minecoins-pack-1720-coins-key-global|EUR|US": {
       "price_minor": 556,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-10-24T06:26:04.539230+00:00"
+      "at": "2026-10-24T11:35:20.694481+00:00"
     },
     "xbox-minecraft-minecoins-pack-3500-coins-key-global|EUR|US": {
       "price_minor": 1137,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-10-24T06:26:04.539230+00:00"
+      "at": "2026-10-24T11:35:20.694481+00:00"
     }
   },
   "notified": {
@@ -76,7 +76,5 @@
   "campaigns": {
     "d070fe8f4f157091fd8cf353": "2026-10-18T01:24:41.808950+00:00"
   },
-  "failures": {
-    "xbox-minecraft-minecoins-pack-330-coins-key-global": "public page unavailable (TimeoutError); no offers inferred"
-  }
+  "failures": {}
 }
