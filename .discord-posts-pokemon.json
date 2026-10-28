@@ -873,6 +873,19 @@
       "message_id": "1564926414376009820",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1565036513505316995": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-10-28T16:16:21Z",
+      "items": [
+        {
+          "key": "pokemon-sword|DE|EUR|physical|used",
+          "scope": "deku/pokemon-sword/DE"
+        }
+      ],
+      "message_id": "1565036513505316995",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
