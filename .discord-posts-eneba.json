@@ -451,6 +451,19 @@
       "message_id": "1565112630836854876",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1565268789111816345": {
+      "channel_id": "1561193661645987920",
+      "created_at": "2026-10-29T07:39:11.838695Z",
+      "items": [
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        }
+      ],
+      "message_id": "1565268789111816345",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
