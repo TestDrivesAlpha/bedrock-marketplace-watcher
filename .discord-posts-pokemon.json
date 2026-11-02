@@ -1015,6 +1015,27 @@
       "message_id": "1566343186329374735",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1566778893522837657": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-11-02T11:39:57Z",
+      "items": [
+        {
+          "key": "pokemon-sword|DE|EUR|physical|used",
+          "scope": "deku/pokemon-sword/DE"
+        },
+        {
+          "key": "pokemon-sword|US|USD|physical|used",
+          "scope": "deku/pokemon-sword/US"
+        },
+        {
+          "key": "pokemon-violet|DE|EUR|physical|used",
+          "scope": "deku/pokemon-violet/DE"
+        }
+      ],
+      "message_id": "1566778893522837657",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
