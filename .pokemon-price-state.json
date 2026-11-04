@@ -5,79 +5,79 @@
       "price": 5999,
       "stock": "listed",
       "lowest": 5999,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-sword|DE|EUR|physical|new": {
       "price": 4499,
       "stock": "listed",
       "lowest": 4056,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-sword|DE|EUR|physical|used": {
-      "price": 3322,
+      "price": 3847,
       "stock": "listed",
       "lowest": 3252,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-sword|US|USD|digital|new": {
       "price": 5999,
       "stock": "listed",
       "lowest": 5999,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-sword|US|USD|physical|new": {
       "price": 5199,
       "stock": "listed",
       "lowest": 5199,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-sword|US|USD|physical|used": {
-      "price": 4419,
+      "price": 4830,
       "stock": "listed",
       "lowest": 3400,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-violet-the-hidden-treasure-of-area-zero|DE|EUR|digital|new": {
       "price": 3499,
       "stock": "listed",
       "lowest": 3499,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-violet-the-hidden-treasure-of-area-zero|US|USD|digital|new": {
       "price": 3499,
       "stock": "listed",
       "lowest": 3499,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-violet|DE|EUR|digital|new": {
       "price": 5999,
       "stock": "listed",
       "lowest": 5999,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-violet|DE|EUR|physical|new": {
-      "price": 4625,
+      "price": 4667,
       "stock": "listed",
       "lowest": 4399,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-violet|DE|EUR|physical|used": {
       "price": 4439,
       "stock": "listed",
       "lowest": 3198,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-violet|US|USD|digital|new": {
       "price": 5699,
       "stock": "listed",
       "lowest": 3499,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-violet|US|USD|physical|new": {
-      "price": 4499,
+      "price": 4799,
       "stock": "listed",
       "lowest": 4499,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokemon-violet|US|USD|physical|used": {
       "price": 4945,
@@ -89,13 +89,13 @@
       "price": 2999,
       "stock": "listed",
       "lowest": 2999,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     },
     "pokmon-sword-expansion-pass|US|USD|digital|new": {
       "price": 2999,
       "stock": "listed",
       "lowest": 2999,
-      "observed_at": "2026-11-04T16:34:07+00:00"
+      "observed_at": "2026-11-04T22:11:24+00:00"
     }
   },
   "pending": []
