@@ -8,40 +8,40 @@
       "at": "2026-11-03T03:42:09.805606+00:00"
     },
     "xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global|EUR|US": {
-      "price_minor": 655,
+      "price_minor": 618,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-11-09T20:02:23.992622+00:00"
+      "at": "2026-11-10T02:54:29.773156+00:00"
     },
     "xbox-minecraft-minecoins-pack-3500-coins-xbox-one-xbox-live-key-global|EUR|US": {
-      "price_minor": 1504,
+      "price_minor": 1502,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-11-09T20:02:23.992622+00:00"
+      "at": "2026-11-10T02:54:29.773156+00:00"
     },
     "xbox-minecraft-minecoins-pack-8800-coins-key-global|EUR|US": {
       "price_minor": 4083,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-11-09T20:02:23.992622+00:00"
+      "at": "2026-11-10T02:54:29.773156+00:00"
     },
     "xbox-minecraft-minecoins-pack-330-coins-key-global|EUR|US": {
       "price_minor": 199,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-11-09T20:02:23.992622+00:00"
+      "at": "2026-11-10T02:54:29.773156+00:00"
     },
     "xbox-minecraft-minecoins-pack-1720-coins-key-global|EUR|US": {
-      "price_minor": 544,
+      "price_minor": 597,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-11-09T20:02:23.992622+00:00"
+      "at": "2026-11-10T02:54:29.773156+00:00"
     },
     "xbox-minecraft-minecoins-pack-3500-coins-key-global|EUR|US": {
-      "price_minor": 1392,
+      "price_minor": 1433,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-11-09T20:02:23.992622+00:00"
+      "at": "2026-11-10T02:54:29.773156+00:00"
     },
     "xbox-minecraft-minecoins-pack-330-coins-xbox-live-key-global|EUR|MX": {
       "price_minor": 249,
@@ -89,7 +89,7 @@
       "price_minor": 2258,
       "currency": "EUR",
       "source_country": "US",
-      "at": "2026-11-09T20:02:23.992622+00:00"
+      "at": "2026-11-10T02:54:29.773156+00:00"
     }
   },
   "notified": {
@@ -171,7 +171,8 @@
     "drop:xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global:US:677:663:2026-11-08T17:13:49.457763+00:00": "2026-11-08T21:21:16.574187+00:00",
     "drop:xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global:US:682:657:2026-11-09T01:12:06.973166+00:00": "2026-11-09T08:38:36.557371+00:00",
     "drop:xbox-minecraft-minecoins-pack-330-coins-key-global:US:242:199:2026-11-09T08:38:36.557371+00:00": "2026-11-09T20:02:23.992622+00:00",
-    "drop:xbox-minecraft-minecoins-pack-3500-coins-key-global:US:1412:1392:2026-11-09T08:38:36.557371+00:00": "2026-11-09T20:02:23.992622+00:00"
+    "drop:xbox-minecraft-minecoins-pack-3500-coins-key-global:US:1412:1392:2026-11-09T08:38:36.557371+00:00": "2026-11-09T20:02:23.992622+00:00",
+    "drop:xbox-minecraft-minecoins-pack-1720-coins-xbox-one-xbox-live-key-global:US:655:618:2026-11-09T20:02:23.992622+00:00": "2026-11-10T02:54:29.773156+00:00"
   },
   "campaigns": {
     "d070fe8f4f157091fd8cf353": "2026-10-18T01:24:41.808950+00:00",
