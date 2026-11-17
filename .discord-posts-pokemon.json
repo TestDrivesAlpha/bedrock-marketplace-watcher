@@ -1544,6 +1544,32 @@
       "message_id": "1572263135430189190",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1572387994113941535": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-11-17T23:08:31Z",
+      "items": [
+        {
+          "key": "pokemon-sword|DE|EUR|physical|new",
+          "scope": "deku/pokemon-sword/DE"
+        }
+      ],
+      "message_id": "1572387994113941535",
+      "purpose": "alert",
+      "replacement_ids": []
+    },
+    "1572387995166838909": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-11-17T23:08:31Z",
+      "items": [
+        {
+          "key": "pokemon-sword|DE|EUR|physical|used",
+          "scope": "deku/pokemon-sword/DE"
+        }
+      ],
+      "message_id": "1572387995166838909",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
