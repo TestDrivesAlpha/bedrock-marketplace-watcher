@@ -1531,6 +1531,19 @@
       "message_id": "1572015874238582966",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1572263135430189190": {
+      "channel_id": "1561193740993822740",
+      "created_at": "2026-11-17T14:52:22Z",
+      "items": [
+        {
+          "key": "pokemon-violet|US|USD|digital|new",
+          "scope": "deku/pokemon-violet/US"
+        }
+      ],
+      "message_id": "1572263135430189190",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
