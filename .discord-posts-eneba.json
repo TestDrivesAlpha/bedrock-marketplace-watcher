@@ -1225,6 +1225,19 @@
       "message_id": "1573983306284933185",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1574273049983975646": {
+      "channel_id": "1561193661645987920",
+      "created_at": "2026-11-23T03:58:54.713416Z",
+      "items": [
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-330-coins-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        }
+      ],
+      "message_id": "1574273049983975646",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
