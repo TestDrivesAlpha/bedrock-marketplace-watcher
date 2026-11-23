@@ -1238,6 +1238,19 @@
       "message_id": "1574273049983975646",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1574444344751038598": {
+      "channel_id": "1561193661645987920",
+      "created_at": "2026-11-23T15:19:34.885441Z",
+      "items": [
+        {
+          "key": "campaign:288dda501f291d00d20464ed",
+          "scope": "eneba-campaigns:US"
+        }
+      ],
+      "message_id": "1574444344751038598",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
