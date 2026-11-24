@@ -1251,6 +1251,19 @@
       "message_id": "1574444344751038598",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1574770477942182003": {
+      "channel_id": "1561193661645987920",
+      "created_at": "2026-11-24T12:55:32.938512Z",
+      "items": [
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-3500-coins-xbox-one-xbox-live-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        }
+      ],
+      "message_id": "1574770477942182003",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
