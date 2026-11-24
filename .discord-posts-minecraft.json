@@ -31,6 +31,48 @@
       "purpose": "alert",
       "replacement_ids": [],
       "webhook_id": "1561627676526247938"
+    },
+    "1574887473958363137": {
+      "message_id": "1574887473958363137",
+      "channel_id": "1557423972633808996",
+      "webhook_id": "1561627676526247938",
+      "created_at": "2026-11-24T20:39:45.041Z",
+      "items": [
+        {
+          "key": "d45633f9-5ab1-4adf-9f5d-cecf8158ae1e",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "c464ce69-b467-4968-89ac-1ea0277a4791",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "27c55e44-09ec-4a3a-86ff-1bc698b78f52",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "909d40b3-9600-4026-adfe-eb91c3eeb8ef",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "b2788856-bc76-493e-a027-2f09dfb5e782",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "94c04ebd-6134-4599-b8ca-82ea435679f1",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "fec1ca82-2e56-4932-8b7c-d2ad273270bb",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "ac7ee94c-6aca-4ac0-8e2f-69b65469e6a0",
+          "scope": "minecraft:catalog"
+        }
+      ],
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
