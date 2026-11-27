@@ -2959,6 +2959,28 @@
       ],
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1576016545350553702": {
+      "message_id": "1576016545350553702",
+      "channel_id": "1557423972633808996",
+      "webhook_id": "1561627676526247938",
+      "created_at": "2026-11-27T23:26:36.756Z",
+      "items": [
+        {
+          "key": "5e6039aa-a4a1-4508-880c-564129ce04bc",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "2e1f786f-7f12-4573-91b4-4e356302737b",
+          "scope": "minecraft:catalog"
+        },
+        {
+          "key": "88dbb84b-2468-401c-97e2-d0f39923368f",
+          "scope": "minecraft:catalog"
+        }
+      ],
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
