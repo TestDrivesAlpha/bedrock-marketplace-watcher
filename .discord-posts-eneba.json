@@ -1290,6 +1290,23 @@
       "message_id": "1575203527439949927",
       "purpose": "alert",
       "replacement_ids": []
+    },
+    "1576088645851422802": {
+      "channel_id": "1561193661645987920",
+      "created_at": "2026-11-28T04:13:30.702850Z",
+      "items": [
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-330-coins-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        },
+        {
+          "key": "offer:xbox-minecraft-minecoins-pack-1720-coins-key-global|EUR|US",
+          "scope": "eneba-minecoins:US:EUR"
+        }
+      ],
+      "message_id": "1576088645851422802",
+      "purpose": "alert",
+      "replacement_ids": []
     }
   },
   "version": 1
